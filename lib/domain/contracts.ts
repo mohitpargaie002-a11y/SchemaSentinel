@@ -21,9 +21,13 @@ export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export const TargetConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
-  environment: z.enum(["development", "staging-demo", "sandbox"]),
+  environment: z.enum(["development", "staging", "staging-demo", "sandbox", "production"]),
   connectionString: z.string(),
   isAllowed: z.boolean().default(true),
+  mutable: z.boolean().default(false),
+  allowedToApply: z.boolean().default(false),
+  approvalRequired: z.boolean().default(true),
+  provider: z.enum(["postgres", "pglite"]).default("postgres"),
 });
 export type TargetConfig = z.infer<typeof TargetConfigSchema>;
 
@@ -102,13 +106,38 @@ export const ApprovalCheckpointSchema = z.object({
 });
 export type ApprovalCheckpoint = z.infer<typeof ApprovalCheckpointSchema>;
 
+export const VerificationCheckSchema = z.object({
+  name: z.string(),
+  passed: z.boolean(),
+  details: z.string(),
+});
+export type VerificationCheck = z.infer<typeof VerificationCheckSchema>;
+
+export const VerificationResultSchema = z.object({
+  status: z.enum(["passed", "failed"]),
+  checks: z.array(VerificationCheckSchema),
+  failures: z.array(z.string()),
+  executionDurationMs: z.number(),
+  timestamp: z.string(),
+});
+export type VerificationResult = z.infer<typeof VerificationResultSchema>;
+
 export const ApplyResultSchema = z.object({
   planId: z.string(),
   targetId: z.string(),
+  status: z.enum([
+    "APPLY_BLOCKED",
+    "APPLY_FAILED",
+    "APPLY_SUCCEEDED",
+    "APPLY_SUCCEEDED_VERIFICATION_FAILED",
+    "COMPLETED",
+  ]),
   success: z.boolean(),
   appliedAt: z.string(),
   executionDurationMs: z.number(),
-  verificationPassed: z.boolean(),
+  verificationPassed: z.boolean().optional(),
+  verificationResult: VerificationResultSchema.optional(),
   auditLog: z.array(z.string()),
+  errorMessage: z.string().optional(),
 });
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;

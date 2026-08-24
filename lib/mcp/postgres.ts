@@ -1,8 +1,10 @@
 import { PGlite } from "@electric-sql/pglite";
-import { SchemaSnapshot, TableMetadata, ApplyResult } from "../domain/contracts.js";
+import { SchemaSnapshot, TableMetadata, ApplyResult, MigrationPlan } from "../domain/contracts.js";
 import { assertReadOnlySql } from "../safety/sql-guard.js";
 import { defaultTargetRegistry, TargetRegistry } from "../safety/target-allowlist.js";
-import { defaultApprovalGate, ApprovalGate } from "../safety/approval-gate.js";
+import { defaultApprovalGate, IApprovalGate } from "../safety/approval-gate.js";
+import { PostApplyVerifier, IPostApplyVerifier } from "../safety/post-apply-verifier.js";
+import { BASELINE_ECOMMERCE_SCHEMA, BASELINE_SEED_DATA } from "../sandbox/fixtures.js";
 
 export interface IPostgresMcpService {
   inspectSchema(targetId: string): Promise<SchemaSnapshot>;
@@ -18,15 +20,18 @@ export interface IPostgresMcpService {
 
 export class PostgresMcpService implements IPostgresMcpService {
   private targetRegistry: TargetRegistry;
-  private approvalGate: ApprovalGate;
+  private approvalGate: IApprovalGate;
   private memoryDbs: Map<string, PGlite> = new Map();
+  private verifier: IPostApplyVerifier;
 
   constructor(
     targetRegistry: TargetRegistry = defaultTargetRegistry,
-    approvalGate: ApprovalGate = defaultApprovalGate
+    approvalGate: IApprovalGate = defaultApprovalGate,
+    verifier?: IPostApplyVerifier
   ) {
     this.targetRegistry = targetRegistry;
     this.approvalGate = approvalGate;
+    this.verifier = verifier || new PostApplyVerifier(this);
   }
 
   /**
@@ -37,28 +42,17 @@ export class PostgresMcpService implements IPostgresMcpService {
     let db = this.memoryDbs.get(target.id);
     if (!db) {
       db = new PGlite();
-      // Initialize with demo schema if demo-postgres
-      if (target.id === "demo-postgres") {
+      // Initialize with demo schema if demo-postgres or staging-demo
+      if (target.id === "demo-postgres" || target.id === "staging-demo") {
+        await db.exec(BASELINE_ECOMMERCE_SCHEMA);
+        await db.exec(BASELINE_SEED_DATA);
         await db.exec(`
-          CREATE TABLE IF NOT EXISTS users (
+          CREATE TABLE IF NOT EXISTS _schemasentinel_migrations (
             id SERIAL PRIMARY KEY,
-            email VARCHAR(255) NOT NULL UNIQUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-
-          CREATE TABLE IF NOT EXISTS orders (
-            id SERIAL PRIMARY KEY,
-            user_id INT REFERENCES users(id),
-            total_amount NUMERIC(10, 2) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-
-          CREATE TABLE IF NOT EXISTS order_items (
-            id SERIAL PRIMARY KEY,
-            order_id INT REFERENCES orders(id),
-            product_name VARCHAR(255) NOT NULL,
-            quantity INT NOT NULL DEFAULT 1,
-            unit_price NUMERIC(10, 2) NOT NULL
+            session_id VARCHAR(128) NOT NULL,
+            plan_id VARCHAR(128) NOT NULL,
+            migration_hash VARCHAR(64) NOT NULL,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           );
         `);
       }
@@ -72,23 +66,22 @@ export class PostgresMcpService implements IPostgresMcpService {
    * Safely inspects tables, columns, indexes, and primary/foreign keys.
    */
   public async inspectSchema(targetId: string): Promise<SchemaSnapshot> {
-    // Verifies target is registered and allowed
     this.targetRegistry.getTarget(targetId);
     const db = await this.getDbForTarget(targetId);
 
-    // Query tables in public schema
     const tablesRes = await db.query<{ table_name: string }>(`
       SELECT table_name 
       FROM information_schema.tables 
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      ORDER BY table_name ASC;
     `);
 
     const tables: TableMetadata[] = [];
 
     for (const row of tablesRes.rows) {
       const tableName = row.table_name;
+      if (tableName.startsWith("_schemasentinel")) continue;
 
-      // Query columns
       const colRes = await db.query<{
         column_name: string;
         data_type: string;
@@ -97,7 +90,8 @@ export class PostgresMcpService implements IPostgresMcpService {
       }>(`
         SELECT column_name, data_type, is_nullable, column_default
         FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = '${tableName}';
+        WHERE table_schema = 'public' AND table_name = '${tableName}'
+        ORDER BY ordinal_position ASC;
       `);
 
       const columns = colRes.rows.map((c) => ({
@@ -107,18 +101,25 @@ export class PostgresMcpService implements IPostgresMcpService {
         defaultValue: c.column_default,
       }));
 
+      // Index inspection
+      const idxRes = await db.query<{ indexname: string }>(`
+        SELECT indexname 
+        FROM pg_indexes 
+        WHERE schemaname = 'public' AND tablename = '${tableName}';
+      `);
+
+      const indexes = idxRes.rows.map((r) => ({
+        name: r.indexname,
+        columns: ["unknown"],
+        isUnique: r.indexname.includes("unique") || r.indexname.includes("pkey"),
+      }));
+
       tables.push({
         tableName,
         columns,
         primaryKeys: ["id"],
         foreignKeys: [],
-        indexes: [
-          {
-            name: `idx_${tableName}_pk`,
-            columns: ["id"],
-            isUnique: true,
-          },
-        ],
+        indexes,
         estimatedRows: 100000,
       });
     }
@@ -145,7 +146,7 @@ export class PostgresMcpService implements IPostgresMcpService {
 
   /**
    * MCP Tool: apply_migration (Irreversible target mutation)
-   * Strictly requires a valid cryptographic approval checkpoint token.
+   * Strictly validates target allowlist, single-use approval token, and executes post-apply verification.
    */
   public async applyMigration(
     targetId: string,
@@ -155,11 +156,13 @@ export class PostgresMcpService implements IPostgresMcpService {
     approvalToken: string
   ): Promise<ApplyResult> {
     const startTime = Date.now();
+    const auditLog: string[] = [];
 
-    // Verify Target
-    this.targetRegistry.getTarget(targetId);
+    // Step 1: Security Target Allowlist Gate (Fails closed on non-mutable/prod targets)
+    const target = this.targetRegistry.assertApplyAllowed(targetId);
+    auditLog.push(`[TARGET VALIDATED]: Target '${targetId}' (${target.environment}) authorized for mutation.`);
 
-    // Cryptographic Approval Verification Gate
+    // Step 2: Cryptographic Approval Verification Gate
     this.approvalGate.verifyApproval(
       approvalToken,
       sessionId,
@@ -167,31 +170,81 @@ export class PostgresMcpService implements IPostgresMcpService {
       targetId,
       rawSql
     );
+    auditLog.push(`[APPROVAL VERIFIED]: Token ${approvalToken.substring(0, 12)}... cryptographically validated.`);
 
+    // Step 3: Capture Pre-migration Schema Snapshot for Invariant Diffing
+    const preSnapshot = await this.inspectSchema(targetId);
+
+    // Step 4: Execute migration DDL against allowlisted target
     const db = await this.getDbForTarget(targetId);
-    const auditLog: string[] = [];
+    auditLog.push(`[APPLYING]: Executing migration DDL on '${targetId}'...`);
+    
+    try {
+      await db.exec(rawSql);
+      auditLog.push("[APPLIED]: DDL execution committed successfully.");
+    } catch (err: any) {
+      return {
+        planId,
+        targetId,
+        status: "APPLY_FAILED",
+        success: false,
+        appliedAt: new Date().toISOString(),
+        executionDurationMs: Date.now() - startTime,
+        auditLog,
+        errorMessage: `Database DDL execution failed: ${err.message}`,
+      };
+    }
 
-    auditLog.push(`[APPROVAL VERIFIED]: Token ${approvalToken.substring(0, 12)}... validated.`);
-    auditLog.push(`[APPLYING]: Executing migration on target '${targetId}'...`);
-
-    // Execute migration
-    await db.exec(rawSql);
-    auditLog.push("[APPLIED]: DDL execution completed successfully.");
-
-    // Revoke token to prevent replay attacks
+    // Step 5: Consume & Retire Single-Use Approval Token
     this.approvalGate.revokeToken(approvalToken);
-    auditLog.push("[TOKEN REVOKED]: Approval token consumed and retired.");
+    auditLog.push("[TOKEN RETIRED]: Single-use approval token consumed and retired.");
 
-    const executionDurationMs = Date.now() - startTime;
+    // Step 6: Record Migration in Target Audit Table
+    const migrationHash = this.approvalGate.computeFingerprint(sessionId, planId, targetId, rawSql);
+    await db.exec(`
+      INSERT INTO _schemasentinel_migrations (session_id, plan_id, migration_hash)
+      VALUES ('${sessionId}', '${planId}', '${migrationHash}');
+    `);
+    auditLog.push("[AUDIT RECORDED]: Migration hash recorded in target metadata catalog.");
+
+    // Step 7: Deterministic Post-Apply Verification
+    auditLog.push("[VERIFYING]: Running post-apply invariant checks...");
+    const dummyPlan: MigrationPlan = {
+      id: planId,
+      sessionId,
+      targetId,
+      userPrompt: "Post-apply verification",
+      rawSql,
+      riskLevel: "LOW",
+      riskFactors: [],
+      affectedTables: ["orders"],
+      createdAt: new Date().toISOString(),
+    };
+
+    const verificationResult = await this.verifier.verify(targetId, dummyPlan, preSnapshot);
+    const verificationPassed = verificationResult.status === "passed";
+
+    auditLog.push(
+      verificationPassed
+        ? `[VERIFIED]: All ${verificationResult.checks.length} post-apply invariant checks PASSED.`
+        : `[VERIFICATION ALERT]: ${verificationResult.failures.length} post-apply checks FAILED.`
+    );
+
+    const finalStatus: ApplyResult["status"] = verificationPassed
+      ? "COMPLETED"
+      : "APPLY_SUCCEEDED_VERIFICATION_FAILED";
 
     return {
       planId,
       targetId,
+      status: finalStatus,
       success: true,
       appliedAt: new Date().toISOString(),
-      executionDurationMs,
-      verificationPassed: true,
+      executionDurationMs: Date.now() - startTime,
+      verificationPassed,
+      verificationResult,
       auditLog,
+      errorMessage: verificationPassed ? undefined : "Post-apply verification detected invariant failures.",
     };
   }
 }
