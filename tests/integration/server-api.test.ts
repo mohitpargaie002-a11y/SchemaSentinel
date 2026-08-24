@@ -129,4 +129,38 @@ describe("Server API - HTTP Endpoints & Session Management", () => {
     const errData = (await invalidRes.json()) as { error: string };
     expect(errData.error).toBe("Invalid session request payload");
   });
+
+  it("POST /api/sessions/:id/approve successfully approves and applies without requiring raw token exposure", async () => {
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetId: "staging-demo",
+        migrationFilePath: "migrations/0038_add_order_status.sql",
+        userPrompt: "Review and approve test",
+      }),
+    });
+    const createData = (await createRes.json()) as { sessionId: string };
+    expect(createRes.status).toBe(201);
+
+    const approveRes = await fetch(`${baseUrl}/api/sessions/${createData.sessionId}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approvedBy: "security-lead@schemasentinel.dev",
+      }),
+    });
+
+    const approveData = (await approveRes.json()) as {
+      sessionId: string;
+      status: string;
+      applyResult?: { success: boolean };
+      verificationResult?: { status: string };
+    };
+
+    expect(approveRes.status).toBe(200);
+    expect(approveData.status).toBe("COMPLETED");
+    expect(approveData.applyResult?.success).toBe(true);
+    expect(approveData.verificationResult?.status).toBe("passed");
+  });
 });

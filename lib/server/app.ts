@@ -200,7 +200,10 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
           sessionId: result.context.sessionId,
           status: result.context.status,
           reviewReport: result.reviewReport,
-          approvalPacket: result.approvalPacket,
+          approvalPacket: {
+            ...result.approvalPacket,
+            approvalToken: `sat_...${result.approvalPacket.approvalToken.slice(-6)} (REDACTED)`,
+          },
           schemaAnalysis: result.schemaAnalysis,
           riskAnalysis: result.riskAnalysis,
           sandboxOutput: result.sandboxOutput,
@@ -247,10 +250,24 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
 
         const { approvalToken, approvedBy } = parseResult.data;
 
+        // Resolve token server-side from persisted session if not provided or redacted
+        let effectiveToken = approvalToken;
+        if (!effectiveToken || effectiveToken.includes("(REDACTED)")) {
+          const session = await sessionStore.loadSession(sessionId);
+          if (!session) {
+            return sendError(404, `Session '${sessionId}' not found`);
+          }
+          if (session.approvalCheckpoint?.token) {
+            effectiveToken = session.approvalCheckpoint.token;
+          } else if (session.approvalPacket?.approvalToken) {
+            effectiveToken = session.approvalPacket.approvalToken;
+          }
+        }
+
         const resumeResult = await orchestrator.resumeAndApplyWorkflow({
           sessionId,
           humanDecision: "APPROVED",
-          approvalToken,
+          approvalToken: effectiveToken,
           approvedBy,
         });
 
