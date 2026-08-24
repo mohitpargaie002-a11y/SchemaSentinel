@@ -7,31 +7,42 @@ ALTER TABLE orders ADD COLUMN fulfillment_status VARCHAR(32) NOT NULL DEFAULT 'p
 CREATE INDEX idx_orders_status ON orders(fulfillment_status);
 ```
 
-On a high-traffic table with millions of rows, this naive migration acquires an `ACCESS EXCLUSIVE` lock and rewrites the table.
+On a high-traffic table with historical records, this naive migration triggers a full table rewrite, blocks concurrent writes via `ACCESS EXCLUSIVE` and `SHARE` locks, and creates unindexed backfill penalties.
 
 ---
 
-## 3-Minute Script
+## 3-Minute Golden Demo Script
 
-1. **Submit Request (0:00 - 0:30)**:
-   - User inputs natural language request or candidate SQL.
-   - TrueForge initializes session and tasks the Schema Analyst subagent.
+1. **Submit Migration Request (0:00 - 0:30)**:
+   - User inputs: *"Review and apply migration 0038_add_order_status.sql to staging-demo."*
+   - TrueForge initializes session `sess_day3_staging_apply_001`.
+   - GitHub MCP retrieves migration file payload.
 
-2. **Schema Inspection & Sandbox Validation (0:30 - 1:15)**:
-   - Postgres MCP inspects `orders` table structure, row counts, and existing indexes.
-   - TrueForge executes candidate SQL in an isolated `PGlite` sandbox.
-   - Sandbox checks uncover high table-lock latency and unindexed backfill penalties.
+2. **Schema Inspection & Ephemeral Sandbox Execution (0:30 - 1:15)**:
+   - Postgres MCP inspects `staging-demo` PostgreSQL schema (`users`, `orders`, `order_items`).
+   - TrueForge executes candidate SQL inside an isolated `PGlite` sandbox with full ecommerce fixtures & seed data.
+   - Smoke queries and rollback scripts execute with complete isolation.
 
 3. **Risk Remediation & Staged Plan (1:15 - 1:45)**:
-   - Risk Analyst categorizes risk as `HIGH` (Table Rewrite + Exclusive Lock).
-   - Agent synthesizes a safer staged migration (`ADD COLUMN` without default → backfill in batches → `CREATE INDEX CONCURRENTLY` → add `NOT NULL` constraint).
+   - Risk Analyzer categorizes risk as `HIGH` (Table Rewrite + Exclusive Lock).
+   - Agent synthesizes a safer 5-phase staged migration (Expand → Set Default → Batched Backfill → Constraint → Concurrent Index).
 
-4. **Human Approval Checkpoint (1:45 - 2:15)**:
+4. **Human Approval Checkpoint & Disconnect Resilience (1:45 - 2:15)**:
    - TrueForge **halts execution** at the human approval gate.
-   - Shows risk card, diff, and cryptographic SHA-256 fingerprint.
-   - Irreversible apply is strictly blocked until the operator clicks **[Approve & Apply]**.
+   - Session state is persisted to `FileSessionStore`.
+   - Client disconnects; when reconnected, the **identical session** is reconstructed without starting over.
+   - Irreversible mutation is strictly blocked until human approval is explicitly granted.
 
-5. **Approved Apply & Verification (2:15 - 3:00)**:
-   - Approved SQL is applied to the authorized target.
-   - Post-apply smoke tests verify schema invariants and application queries.
-   - Agent outputs audit certificate and updates GitHub PR.
+5. **Approved Staging Apply & Deterministic Verification (2:15 - 3:00)**:
+   - Human operator approves; the **SAME session** is resumed.
+   - Migration is applied to allowlisted `staging-demo` target via Postgres MCP.
+   - Single-use approval token is consumed and retired.
+   - `PostApplyVerifier` performs live catalog assertions (column types, created indexes, application queries, no unintended drops).
+   - Agent writes immutable audit record to `_schemasentinel_migrations` and marks session `COMPLETED`.
+
+---
+
+## Runnable CLI Demo
+```bash
+npm run demo:day3
+```
