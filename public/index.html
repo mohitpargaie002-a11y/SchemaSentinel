@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-  <!-- Live Announcement for Screen Readers -->
+  <!-- Live Announcement for Accessibility -->
   <div id="aria-live-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Header -->
@@ -18,7 +18,7 @@
     <div class="header-inner">
       <div class="header-brand">
         <div class="brand-logo" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
           </svg>
         </div>
@@ -29,7 +29,7 @@
       </div>
 
       <div class="header-status">
-        <div class="status-pill status-pill-online" id="system-status-pill">
+        <div class="status-pill" id="system-status-pill">
           <span class="status-dot"></span>
           <span>Core Online</span>
         </div>
@@ -40,23 +40,21 @@
   <!-- Main Container -->
   <main class="app-main">
     
-    <!-- Top Request & Configuration Bar -->
+    <!-- Top Migration Request Bar -->
     <section class="panel request-panel" aria-labelledby="request-heading">
       <form id="migration-form" class="request-form">
         <div class="form-row">
           <div class="form-field target-field">
-            <label for="target-select" id="request-heading">Target Database</label>
-            <div class="select-wrapper">
-              <select id="target-select" class="control-select" required>
-                <option value="staging-demo" selected>staging-demo (Allowlisted Staging)</option>
-                <option value="demo-postgres">demo-postgres (Read-Only Demo)</option>
-                <option value="prod-postgres">prod-postgres (Protected Production)</option>
-              </select>
-            </div>
+            <label for="target-select" id="request-heading">Target database</label>
+            <select id="target-select" class="control-select" required>
+              <option value="staging-demo" selected>staging-demo (Allowlisted Staging)</option>
+              <option value="demo-postgres">demo-postgres (Read-Only Demo)</option>
+              <option value="prod-postgres">prod-postgres (Protected Production)</option>
+            </select>
           </div>
 
           <div class="form-field file-field">
-            <label for="migration-file">Migration File</label>
+            <label for="migration-file">Migration file path</label>
             <input type="text" id="migration-file" class="control-input" value="migrations/0038_add_order_status.sql" required spellcheck="false">
           </div>
 
@@ -73,8 +71,8 @@
     <!-- Subagent Execution Strip -->
     <section class="subagents-strip" aria-labelledby="subagents-heading">
       <div class="section-header">
-        <h2 id="subagents-heading" class="section-title">Specialized Subagents</h2>
-        <span class="section-subtitle">Autonomous TrueForge Tool & AST Collaboration</span>
+        <h2 id="subagents-heading" class="section-title">Specialized subagents</h2>
+        <span class="section-subtitle">Autonomous TrueForge tool & AST collaboration</span>
       </div>
 
       <div class="subagents-grid">
@@ -154,7 +152,7 @@
         <section class="panel" aria-labelledby="risk-matrix-heading">
           <div class="panel-header">
             <div>
-              <h2 id="risk-matrix-heading" class="panel-title">Quantitative Risk Matrix</h2>
+              <h2 id="risk-matrix-heading" class="panel-title">Quantitative risk matrix</h2>
               <p class="panel-subtitle">Calculated locking, rewrite, and rollback hazards</p>
             </div>
             <span id="overall-risk-badge" class="badge badge-neutral">Awaiting Run</span>
@@ -162,34 +160,34 @@
 
           <div class="metrics-table-grid">
             <div class="metric-cell">
-              <span class="cell-label">Lock Severity</span>
+              <span class="cell-label">Lock severity</span>
               <span class="cell-val" id="val-lock-risk">—</span>
             </div>
             <div class="metric-cell">
-              <span class="cell-label">Table Rewrite</span>
+              <span class="cell-label">Table rewrite</span>
               <span class="cell-val" id="val-table-rewrite">—</span>
             </div>
             <div class="metric-cell">
-              <span class="cell-label">Data Integrity</span>
+              <span class="cell-label">Data integrity</span>
               <span class="cell-val" id="val-data-integrity">—</span>
             </div>
             <div class="metric-cell">
-              <span class="cell-label">Sandbox Result</span>
+              <span class="cell-label">Sandbox result</span>
               <span class="cell-val" id="val-sandbox-status">—</span>
             </div>
             <div class="metric-cell">
-              <span class="cell-label">Rollback Verified</span>
+              <span class="cell-label">Rollback verified</span>
               <span class="cell-val" id="val-rollback-status">—</span>
             </div>
             <div class="metric-cell">
-              <span class="cell-label">Affected Objects</span>
+              <span class="cell-label">Affected objects</span>
               <span class="cell-val" id="val-affected-tables">—</span>
             </div>
           </div>
 
-          <!-- Identified Hazards & Remediations Area -->
+          <!-- Identified Hazards Area -->
           <div class="findings-wrapper" id="findings-area" style="display: none;">
-            <h3 class="findings-heading">Identified Hazards & Safe Remediations</h3>
+            <h3 class="findings-heading">Identified hazards & safe remediations</h3>
             <div id="findings-list" class="findings-items"></div>
           </div>
         </section>
@@ -198,8 +196,8 @@
         <section class="panel" aria-labelledby="staged-plan-heading">
           <div class="panel-header">
             <div>
-              <h2 id="staged-plan-heading" class="panel-title">Recommended Staged Rollout</h2>
-              <p class="panel-subtitle">5-Phase progressive deployment to eliminate downtime</p>
+              <h2 id="staged-plan-heading" class="panel-title">Recommended staged rollout</h2>
+              <p class="panel-subtitle">Progressive deployment plan to prevent locking and downtime</p>
             </div>
           </div>
 
@@ -218,33 +216,33 @@
         <!-- Human Approval Card (Primary Decision Anchor) -->
         <section class="panel approval-panel" id="approval-card" aria-labelledby="approval-heading">
           <div class="approval-header">
-            <div class="approval-icon-badge">
+            <div class="approval-icon-badge" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                 <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
               </svg>
             </div>
             <div>
-              <h2 id="approval-heading" class="approval-title">Human Approval Checkpoint</h2>
+              <h2 id="approval-heading" class="approval-title">Human approval checkpoint</h2>
               <p class="approval-subtitle">Non-bypassable mutation boundary</p>
             </div>
           </div>
 
           <div class="approval-details">
             <div class="detail-row">
-              <span class="detail-key">Target Database</span>
+              <span class="detail-key">Target database</span>
               <span class="detail-val font-mono" id="approval-target">staging-demo</span>
             </div>
             <div class="detail-row">
-              <span class="detail-key">Target Environment</span>
+              <span class="detail-key">Target environment</span>
               <span class="detail-val font-mono" id="approval-env">staging</span>
             </div>
             <div class="detail-row">
-              <span class="detail-key">Plan Fingerprint</span>
+              <span class="detail-key">Plan fingerprint</span>
               <span class="detail-val font-mono text-truncate" id="approval-fingerprint">SHA-256 Awaiting Generation</span>
             </div>
             <div class="detail-row">
-              <span class="detail-key">Approval Token</span>
+              <span class="detail-key">Approval token</span>
               <span class="detail-val font-mono" id="approval-token">Awaiting Verification</span>
             </div>
           </div>
@@ -268,7 +266,7 @@
         <section class="panel verification-panel" id="verification-card" style="display: none;" aria-labelledby="verification-heading">
           <div class="panel-header">
             <div>
-              <h2 id="verification-heading" class="panel-title">Post-Apply Verification</h2>
+              <h2 id="verification-heading" class="panel-title">Post-apply verification</h2>
               <p class="panel-subtitle">Deterministic post-apply invariant checks</p>
             </div>
             <span id="verification-status-badge" class="badge badge-safe">PASSED</span>
@@ -281,8 +279,8 @@
         <section class="panel timeline-panel" aria-labelledby="timeline-heading">
           <div class="panel-header">
             <div>
-              <h2 id="timeline-heading" class="panel-title">Execution Trace</h2>
-              <p class="panel-subtitle">Real-time subagent event log</p>
+              <h2 id="timeline-heading" class="panel-title">Execution trace</h2>
+              <p class="panel-subtitle">Real-time subagent activity stream</p>
             </div>
             <span class="badge badge-info" id="event-count-badge">0 Events</span>
           </div>
@@ -299,7 +297,7 @@
     <section class="panel evidence-panel" aria-labelledby="evidence-heading">
       <div class="panel-header">
         <div>
-          <h2 id="evidence-heading" class="panel-title">Deep Evidence & Audit Explorer</h2>
+          <h2 id="evidence-heading" class="panel-title">Deep evidence & audit explorer</h2>
           <p class="panel-subtitle">Low-level AST, catalog snapshot, sandbox logs, and cryptographic audit records</p>
         </div>
       </div>

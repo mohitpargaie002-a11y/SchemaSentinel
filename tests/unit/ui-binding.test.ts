@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "fs/promises";
 import path from "path";
 
-describe("UI Data Binding & Contract Invariants", () => {
+describe("UI Data Binding & Visual Contract Tests", () => {
   it("verifies all DOM element IDs in public/app.js exist in public/index.html", async () => {
     const htmlPath = path.resolve(process.cwd(), "public/index.html");
     const jsPath = path.resolve(process.cwd(), "public/app.js");
@@ -89,15 +89,28 @@ describe("UI Data Binding & Contract Invariants", () => {
     }
   });
 
-  it("verifies public/style.css contains essential Geist/Linear design tokens", async () => {
+  it("verifies public/style.css contains the Ink & Paper neutral tokens and typography scale", async () => {
     const cssPath = path.resolve(process.cwd(), "public/style.css");
     const cssContent = await fs.readFile(cssPath, "utf-8");
 
-    expect(cssContent).toContain("--bg-canvas");
-    expect(cssContent).toContain("--bg-surface");
-    expect(cssContent).toContain("--status-safe");
-    expect(cssContent).toContain("--status-warn");
-    expect(cssContent).toContain("--status-danger");
+    // Ink & Paper Palette tokens
+    expect(cssContent).toContain("--bg-page: #09090a");
+    expect(cssContent).toContain("--bg-surface: #101011");
+    expect(cssContent).toContain("--bg-elevated: #171718");
+    expect(cssContent).toContain("--border-subtle: #27272a");
+    expect(cssContent).toContain("--border-strong: #3f3f46");
+    expect(cssContent).toContain("--text-primary: #f5f5f5");
+    expect(cssContent).toContain("--text-secondary: #a1a1aa");
+    expect(cssContent).toContain("--text-muted: #71717a");
+    expect(cssContent).toContain("--action-primary-bg: #f5f5f5");
+
+    // Semantic tokens
+    expect(cssContent).toContain("--success: #63b58a");
+    expect(cssContent).toContain("--warning: #d6a84f");
+    expect(cssContent).toContain("--danger: #e06b6b");
+    expect(cssContent).toContain("--info: #a1a1aa");
+
+    // Typography and Focus
     expect(cssContent).toContain("--font-sans");
     expect(cssContent).toContain("--font-mono");
     expect(cssContent).toContain(":focus-visible");

@@ -1,71 +1,77 @@
 # DESIGN.md — SchemaSentinel Visual & Operational Design System
 
-## 1. Visual Philosophy & Design Direction
+## 1. Visual Philosophy & Design Identity: "Ink & Paper"
 
-SchemaSentinel is a **premium database reliability & safety product** designed for Staff DBAs, Lead Platform Engineers, and Software Architects.
+SchemaSentinel is a **quiet, precise, and serious database reliability tool** engineered for Staff DBAs, Principal SREs, and Platform Architects.
 
-It is inspired by the design principles of **Vercel Geist**, **Linear**, and **Apple Human Interface Guidelines**:
-- **Hierarchy Over Decoration**: Risk, candidate SQL, and safety assertions dominate; decorative chrome and glowing cards are eliminated.
-- **Calm, Restrained Palette**: Deep obsidian surfaces, subtle borders, and intentional semantic colors (emerald for verified/safe, amber for human approval checkpoints, crimson for high-risk table rewrites, and sky-cyan for diagnostics).
-- **Crisp Typography**: High-legibility modern sans-serif (`Inter`) paired with clean monospace (`JetBrains Mono`) for SQL statements, row counts, and cryptographic hashes.
-- **Information-Dense but Uncluttered**: Compact spacing on a 4px scale, subtle elevation, and structured tabular data layouts.
-- **Subtle Motion**: 120–180ms ease-out transitions for state changes without bouncy or theatrical animations.
+Inspired by the design philosophies of **Vercel Geist**, **Linear**, and **GitHub Primer**, the visual system eliminates decorative AI tropes (neon glows, blue developer-dashboard chrome, saturated cards, and decorative gradients) in favor of an **"Ink & Paper"** aesthetic:
+
+- **Quiet & Minimal**: Obsidian and carbon neutral surfaces (`#09090A`, `#101011`, `#171718`) provide a calm, high-contrast reading environment where critical database hazards naturally stand out.
+- **Restrained & Semantic Color**: Color is never used for general UI chrome. Semantic colors appear strictly to communicate state:
+  - **Success / Passed (`#63B58A`)**: Completed steps, passed sandbox assertions, verified invariants.
+  - **Warning / Attention (`#D6A84F`)**: Human approval required, lock hazards, table rewrite warnings.
+  - **Danger / Blocked (`#E06B6B`)**: Execution failure, critical mutation rejection, syntax/constraint violations.
+  - **Information / Neutral (`#A1A1AA`)**: Metadata, tool names, timing, catalog attributes.
+- **Technical & Typographic Precision**: Modern geometric sans-serif (`Inter`) paired with clean monospace (`JetBrains Mono`) for SQL statements, row counts, and cryptographic hashes.
+- **Structured Surface Hierarchy**: Subtle 1px borders (`#27272A`) and minimal elevation (`0 8px 30px rgba(0,0,0,0.18)`) replace heavy borders and glowing cards.
 
 ---
 
-## 2. Design Tokens
+## 2. Color System Tokens
 
-### 2.1 Color Tokens
 ```css
 :root {
   /* Canvas & Neutral Surfaces */
-  --bg-canvas: #090d14;
-  --bg-surface: #101726;
-  --bg-surface-elevated: #162033;
-  --bg-surface-hover: #1c2840;
-  --bg-input: #0c1220;
+  --bg-page: #09090a;
+  --bg-surface: #101011;
+  --bg-elevated: #171718;
+  --bg-hover: #1d1d1f;
+  --bg-input: #0c0c0d;
 
-  /* Borders & Dividers */
-  --border-subtle: #1e293b;
-  --border-muted: #2d3b55;
-  --border-focus: #3b82f6;
-
-  /* Text & Content */
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --text-inverse: #090d14;
-
-  /* Semantic State Colors */
-  --status-safe: #10b981;
-  --status-safe-bg: rgba(16, 185, 129, 0.12);
-  --status-safe-border: rgba(16, 185, 129, 0.28);
-
-  --status-warn: #f59e0b;
-  --status-warn-bg: rgba(245, 158, 11, 0.12);
-  --status-warn-border: rgba(245, 158, 11, 0.28);
-
-  --status-danger: #ef4444;
-  --status-danger-bg: rgba(239, 68, 68, 0.12);
-  --status-danger-border: rgba(239, 68, 68, 0.28);
-
-  --status-info: #0ea5e9;
-  --status-info-bg: rgba(14, 165, 233, 0.12);
-  --status-info-border: rgba(14, 165, 233, 0.28);
-
-  /* Elevation & Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
-
-  /* Radii */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-full: 9999px;
+  /* Borders & Separators */
+  --border-subtle: #27272a;
+  --border-strong: #3f3f46;
+  --border-focus: #71717a;
 
   /* Typography */
+  --text-primary: #f5f5f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --text-inverse: #09090a;
+
+  /* Primary Action Buttons (High Contrast Neutral) */
+  --action-primary-bg: #f5f5f5;
+  --action-primary-text: #09090a;
+  --action-primary-hover: #ffffff;
+
+  /* Semantic State Colors (Subtle & Purposeful) */
+  --success: #63b58a;
+  --success-bg: rgba(99, 181, 138, 0.1);
+  --success-border: rgba(99, 181, 138, 0.25);
+
+  --warning: #d6a84f;
+  --warning-bg: rgba(214, 168, 79, 0.1);
+  --warning-border: rgba(214, 168, 79, 0.25);
+
+  --danger: #e06b6b;
+  --danger-bg: rgba(224, 107, 107, 0.1);
+  --danger-border: rgba(224, 107, 107, 0.25);
+
+  --info: #a1a1aa;
+  --info-bg: rgba(161, 161, 170, 0.08);
+  --info-border: rgba(161, 161, 170, 0.2);
+
+  /* Shadows & Elevation */
+  --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 8px 30px rgba(0, 0, 0, 0.18);
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  /* Typography Families */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
 
@@ -77,92 +83,85 @@ It is inspired by the design principles of **Vercel Geist**, **Linear**, and **A
 
 ---
 
-## 3. Core UI Surfaces
+## 3. Typography Scale & Hierarchy
 
-### 3.1 Global Header & Target Bar
-- Sticky, compact 56px header.
-- Product moniker: **`SchemaSentinel`** with subtle version tag and status pill.
-- Allowlisted target selector dropdown with inline environment indicator (`[Mutable Staging]` vs `[Read-Only Prod]`).
-
-### 3.2 Subagent Execution Strip
-Compact horizontal subagent status grid displaying real-time execution telemetry:
-- **Schema Analyst**: Catalog tables, indexes, volume estimates, status badges (`IDLE`, `RUNNING`, `COMPLETED`).
-- **Risk Analyst**: Lock risk severity, table rewrite hazards, AST analysis duration.
-- **Sandbox Validator**: Ephemeral PGlite dry-run execution duration, assertion count, rollback status.
-- **Review Synthesizer**: Evidence collation, SHA-256 fingerprint, approval token readiness.
-
-### 3.3 Quantitative Risk Matrix & Staged Rollout Plan
-- **Risk Matrix**: Metric grid showing Lock Severity, Table Rewrite, Data Integrity, Sandbox, Rollback, and Affected Objects.
-- **Staged Rollout Plan**: Progressive 5-phase zero-downtime execution checklist dynamically derived from backend analysis.
-
-### 3.4 The Human Approval Boundary (Primary Focal Point)
-The centerpiece of the review interface:
-- **What will change?**: Migration summary & affected tables.
-- **Where?**: Allowlisted target database & environment.
-- **Is it safe?**: Overall risk rating, lock hazard rating, and sandbox status.
-- **What am I approving?**: Cryptographic SHA-256 fingerprint & redacted token (`sat_...XXXXXX (REDACTED)`).
-- **Actions**: Explicit **[Reject Migration]** and **[Approve & Apply to Staging]** buttons with confirmation gates.
-
-### 3.5 Post-Apply Invariant Verification Matrix
-Post-apply assertion dashboard rendering individual check results:
-- Catalog schema introspection verification.
-- Column structure & normalized datatype checks.
-- Index creation checks.
-- Application smoke query assertions (rows returned, timing).
-- Unintended table deletion assertions.
-
-### 3.6 Execution Trace Timeline (Feed)
-A real-time, chronological execution trace showing:
-- Subagent / actor attribution badge (`[SCHEMA_ANALYST]`, `[RISK_ANALYST]`, `[SANDBOX_VALIDATOR]`, `[REVIEW_SYNTHESIZER]`, `[ORCHESTRATOR]`, `[HUMAN]`).
-- Phase, timestamp, duration, tool name, and formatted message.
-
-### 3.7 Deep Evidence & Audit Explorer (Tabbed)
-Tabbed interface for low-level inspection:
-- **Migration SQL**: Formatted candidate DDL.
-- **Target Schema**: Introspected database catalog JSON.
-- **Sandbox Logs**: Ephemeral PGlite dry-run execution results & assertions.
-- **Audit Trail**: Cryptographic session event ledger with timestamps and SHA-256 checksums.
+| Element | Font Size | Weight | Line Height | Font Family | Case |
+|---|---|---|---|---|---|
+| **Page Title** | `24px` | `700` | `1.2` | `Inter` | Title Case |
+| **Section Headings** | `18px` | `600` | `1.3` | `Inter` | Title Case |
+| **Card Headings** | `16px` | `600` | `1.3` | `Inter` | Title Case |
+| **Body & Paragraphs** | `14px` | `400` | `1.5` | `Inter` | Sentence case |
+| **Labels & Form Headers** | `13px` | `500` | `1.4` | `Inter` | Sentence case |
+| **Metadata & Subtitles** | `12px` | `400` | `1.4` | `Inter` | Sentence case |
+| **Status Badges & Markers** | `11px` | `600` | `1.0` | `JetBrains Mono` | UPPERCASE |
+| **Technical Data & SQL** | `13px` | `400` | `1.5` | `JetBrains Mono` | Normal |
+| **Primary Metric Values** | `22px` | `600` | `1.2` | `JetBrains Mono` | Normal |
+| **Risk Value Text** | `18px` | `600` | `1.2` | `JetBrains Mono` | UPPERCASE |
+| **Buttons** | `14px` | `500` | `1.0` | `Inter` | Sentence case |
 
 ---
 
-## 4. State Management & DOM Binding Contract
+## 4. Component Rules
 
-| Component | HTML Element ID | JavaScript Selector | Data Binding Source |
-|---|---|---|---|
-| Target Selector | `target-select` | `document.getElementById("target-select")` | `GET /api/targets` |
-| Migration File Input | `migration-file` | `document.getElementById("migration-file")` | User input / Default fixture |
-| Review Trigger Button | `btn-start-review` | `document.getElementById("btn-start-review")` | Form submission |
-| Schema Analyst Card | `agent-schema-analyst` | `document.getElementById("agent-schema-analyst")` | `session.schemaAnalysis` |
-| Risk Analyst Card | `agent-risk-analyst` | `document.getElementById("agent-risk-analyst")` | `session.riskAnalysis` |
-| Sandbox Validator Card | `agent-sandbox-validator` | `document.getElementById("agent-sandbox-validator")` | `session.sandboxOutput` |
-| Review Synthesizer Card | `agent-review-synthesizer` | `document.getElementById("agent-review-synthesizer")` | `session.reviewReport` |
-| Risk Matrix Badges | `val-lock-risk`, `val-table-rewrite`, etc. | `document.getElementById("val-...")` | `session.reviewReport` |
-| Staged Plan List | `staged-plan-list` | `document.getElementById("staged-plan-list")` | `session.reviewReport.recommendedPlan` |
-| Approval Card | `approval-card` | `document.getElementById("approval-card")` | `session.approvalPacket` |
-| Approval Target | `approval-target` | `document.getElementById("approval-target")` | `session.approvalPacket.targetId` |
-| Approval Token | `approval-token` | `document.getElementById("approval-token")` | `session.approvalPacket.approvalToken` |
-| Approval Checksum | `approval-fingerprint` | `document.getElementById("approval-fingerprint")` | `session.approvalPacket.sqlFingerprint` |
-| Approve Button | `btn-approve` | `document.getElementById("btn-approve")` | `POST /api/sessions/:id/approve` |
-| Reject Button | `btn-reject` | `document.getElementById("btn-reject")` | `POST /api/sessions/:id/reject` |
-| Verification Card | `verification-card` | `document.getElementById("verification-card")` | `session.verificationResult` |
-| Verification Status Badge | `verification-status-badge`| `document.getElementById("verification-status-badge")`| `session.verificationResult.status` |
-| Verification Checks List | `verification-checks-list`| `document.getElementById("verification-checks-list")` | `session.verificationResult.checks` |
-| Timeline Feed | `timeline-feed` | `document.getElementById("timeline-feed")` | `session.activityEvents` / `session.timeline` |
-| Evidence SQL View | `evidence-sql` | `document.getElementById("evidence-sql")` | `session.plan.rawSql` |
-| Evidence Schema View | `evidence-schema` | `document.getElementById("evidence-schema")` | `session.schemaSnapshot` |
-| Evidence Sandbox View | `evidence-sandbox` | `document.getElementById("evidence-sandbox")` | `session.sandboxOutput` |
-| Evidence Audit View | `evidence-audit` | `document.getElementById("evidence-audit")` | Session audit record |
+### 4.1 Global Header & Navigation
+- Height: `56px`, fixed top border `1px solid var(--border-subtle)`.
+- Background: `var(--bg-surface)`.
+- Brand Title: `20px` bold with neutral `var(--text-primary)`, subtitle tag in `var(--text-muted)`.
+- Status Indicator: Small pill with a subtle green dot (`#63B58A`) for Core Online.
+
+### 4.2 Migration Request Bar
+- Inputs use dark neutral background (`var(--bg-input)`), subtle border (`var(--border-subtle)`), and distinct focus border (`var(--border-focus)`).
+- Primary Button (**[Run Safety Review]**): High-contrast crisp white background (`#F5F5F5`) with black text (`#09090A`), transitioning to `#FFFFFF` on hover.
+
+### 4.3 Subagent Execution Strip
+- All 4 cards share the identical neutral surface (`var(--bg-surface)`). No per-card saturated backgrounds.
+- Card metrics display technical stats (`3 tables · 6 indexes`, `2070ms`, `Rollback: PASS`) using `JetBrains Mono`.
+- State transitions update the compact status badge:
+  - `IDLE`: Neutral badge (`var(--bg-elevated)`).
+  - `RUNNING`: Subtle neutral/amber tag with clean status text.
+  - `COMPLETED`: Muted green status tag (`#63B58A`).
+  - `FAILED`: Muted red status tag (`#E06B6B`).
+
+### 4.4 Quantitative Risk Matrix & Staged Rollout Plan
+- **Risk Matrix**: Metric grid using neutral cells with subtle 1px dividers. Semantic color applies *only* to the actual metric value (e.g. `HIGH` in muted red, `PASS` in muted green). The matrix container itself remains neutral.
+- **Staged Rollout Plan**: Progressive 5-phase execution plan in clean numbered items with monospace phase indicators.
+
+### 4.5 The Human Approval Checkpoint (Primary Decision Anchor)
+- Elevated neutral panel (`var(--bg-elevated)`) with a subtle 1px border (`var(--border-strong)`).
+- Displays exact mutation target, environment, SHA-256 fingerprint, and redacted approval token (`sat_...XXXXXX (REDACTED)`).
+- Warning note rendered with a restrained amber accent.
+- Action Buttons:
+  - **[Reject Migration]**: Neutral secondary button (`var(--bg-surface)` with `var(--border-subtle)`).
+  - **[Approve & Apply to Staging]**: Muted success green button (`#63B58A` with `#09090A` text) signifying an explicit, verified mutation.
+
+### 4.6 Execution Trace Timeline
+- Chronological event stream with subtle status dots, timestamps, actor labels (`[SCHEMA_ANALYST]`, `[RISK_ANALYST]`, `[SANDBOX_VALIDATOR]`, `[REVIEW_SYNTHESIZER]`), and duration metrics.
+
+### 4.7 Deep Evidence Explorer
+- Clean tabbed interface switching between *Migration SQL*, *Target Schema*, *Sandbox Logs*, and *Audit Ledger*.
+- Code blocks rendered with `JetBrains Mono` at `13px` over a deep carbon surface (`#0C0C0D`).
 
 ---
 
-## 5. Responsive & Accessibility Invariants
+## 5. Spacing, Elevation & Radius Scale
+
+- **Spacing Scale (4px Base)**: `4px`, `8px`, `12px`, `16px`, `20px`, `24px`, `32px`, `40px`.
+- **Corner Radii**:
+  - `6px` (`--radius-sm`): Buttons, inputs, small tags, metric cells.
+  - `8px` (`--radius-md`): Subagent cards, workflow panels, evidence code blocks.
+  - `10px` (`--radius-lg`): Modal overlays, approval focal container.
+  - `9999px` (`--radius-full`): Status pills and badges only.
+- **Elevation**: Single unified shadow `--shadow-elevated: 0 8px 30px rgba(0,0,0,0.18)` for elevated interactive surfaces.
+
+---
+
+## 6. Accessibility & Responsive Requirements
 
 1. **Accessibility (`a11y`)**:
-   - `aria-live="polite"` element `#aria-live-announcer` broadcasts major state transitions.
-   - All interactive controls have distinct `:focus-visible` outlines.
-   - Contrast ratio exceeds WCAG 2.1 AA standards (minimum 4.5:1 for body, 3:1 for large text).
-   - Semantic HTML5 elements (`<header>`, `<main>`, `<section>`, `<article>`, `<nav>`, `<footer>`) with explicit `aria-labelledby` linkages.
+   - Contrast ratio exceeds WCAG 2.1 AA (minimum 4.5:1 for body text, 3:1 for large headings/badges).
+   - High-contrast `:focus-visible` ring (`2px solid var(--border-focus)` with `2px offset`).
+   - Screen reader announcement via `#aria-live-announcer` (`aria-live="polite"`).
 2. **Responsive Breakpoints**:
-   - Desktop: `1200px+` (Two-column layout: Risk & Staged Plan left, Approval & Timeline right).
-   - Tablet: `768px - 1199px` (Stacked single-column layout with preserved component hierarchy).
-   - Mobile: `< 768px` (Fluid cards, wrapped form controls, full-width buttons).
+   - Desktop (`1200px+`): 2-column workflow grid (Main telemetry left, Approval & Timeline right).
+   - Tablet (`768px - 1199px`): Single-column stacked layout preserving decision hierarchy.
+   - Mobile (`< 768px`): Fluid grid, stacked form inputs, full-width button actions with zero horizontal overflow.
