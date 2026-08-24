@@ -1,6 +1,7 @@
 import http from "http";
 import fs from "fs/promises";
 import path from "path";
+import { z } from "zod";
 import { defaultOrchestrator, TrueForgeOrchestrator } from "../agent/orchestrator.js";
 import { defaultSessionStore, ISessionStore, PersistedSessionState } from "../agent/session-store.js";
 import { defaultTargetRegistry, TargetRegistry } from "../safety/target-allowlist.js";
@@ -28,7 +29,7 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
   const broadcaster = options.broadcaster || SessionEventBroadcaster.getInstance();
   const orchestrator =
     options.orchestrator ||
-    (options.sessionStore
+    (options.sessionStore || options.broadcaster
       ? new TrueForgeOrchestrator(undefined, undefined, undefined, sessionStore, undefined, undefined, undefined, undefined, undefined, undefined, broadcaster)
       : defaultOrchestrator);
   const targetRegistry = options.targetRegistry || defaultTargetRegistry;
@@ -225,9 +226,20 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
       }
 
       // 5. Live Server-Sent Events (SSE) Stream API
-      const sseMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/events\/stream$/);
+      const sseMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/events\/stream$/);
       if (req.method === "GET" && sseMatch) {
-        const sessionId = sseMatch[1];
+        const parsedSessionId = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/).safeParse(sseMatch[1]);
+        if (!parsedSessionId.success) {
+          return sendError(400, "Validation failed: invalid sessionId format", parsedSessionId.error.format());
+        }
+        const sessionId = parsedSessionId.data;
+
+        // Verify session existence in store or active broadcaster buffer to prevent unauthenticated pre-subscription leaks
+        const existingSession = await sessionStore.loadSession(sessionId);
+        const hasActiveEvents = broadcaster.getEvents(sessionId).length > 0;
+        if (!existingSession && !hasActiveEvents) {
+          return sendError(404, `Session '${sessionId}' not found`);
+        }
         
         // Setup SSE Headers
         res.writeHead(200, {

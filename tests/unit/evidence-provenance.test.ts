@@ -50,7 +50,7 @@ describe("Evidence Provenance & Integrity Model", () => {
     }
   });
 
-  it("orchestrator attaches deterministic evidence items and provenance list to review results", async () => {
+  it("orchestrator attaches deterministic evidence items and provenance list to review results and hashes match rawReference", async () => {
     const tempDir = path.join(os.tmpdir(), `schemasentinel_prov_test_${Date.now()}`);
     const store = new FileSessionStore(tempDir);
     const orchestrator = new TrueForgeOrchestrator(undefined, undefined, undefined, store);
@@ -88,5 +88,12 @@ describe("Evidence Provenance & Integrity Model", () => {
     // Verify ReviewReport provenance contains all evidence IDs
     expect(res.reviewReport.evidenceProvenance).toContain(sqlEvi?.evidenceId);
     expect(res.reviewReport.evidenceProvenance).toContain(schemaEvi?.evidenceId);
+
+    // Verify content hashes match exact payload snapshot without corruption
+    for (const evi of res.evidenceItems) {
+      const payloadStr = typeof evi.rawReference === "string" ? evi.rawReference : JSON.stringify(evi.rawReference);
+      const recomputedHash = crypto.createHash("sha256").update(payloadStr, "utf-8").digest("hex");
+      expect(evi.contentHash).toBe(recomputedHash);
+    }
   });
 });

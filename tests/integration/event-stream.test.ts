@@ -41,10 +41,32 @@ describe("Live Server-Sent Events (SSE) Streaming API", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  it("rejects uninitialized sessions with 404 and invalid format with 400", async () => {
+    // 404 on non-existent session
+    const res404 = await fetch(`http://localhost:${port}/api/sessions/sess_non_existent_123/events/stream`);
+    expect(res404.status).toBe(404);
+
+    // 400 on invalid format with illegal characters
+    const res400 = await fetch(`http://localhost:${port}/api/sessions/bad$session!id/events/stream`);
+    expect(res400.status).toBe(400);
+  });
+
   it("subscribes to /api/sessions/:id/events/stream and receives real-time events as they execute", async () => {
     const sessionId = "sess_sse_test_1";
 
-    // Start SSE listener request
+    // Start review workflow in background
+    const reviewPromise = orchestrator.executeReviewWorkflow({
+      sessionId,
+      targetId: "staging-demo",
+      repo: "mohitpargaie002-a11y/SchemaSentinel",
+      migrationFilePath: "migrations/0038_add_order_status.sql",
+      userPrompt: "Review migration",
+    });
+
+    // Wait 50ms for session to initialize in broadcaster
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Connect SSE listener
     const receivedChunks: string[] = [];
     const sseReq = http.request(
       `http://localhost:${port}/api/sessions/${sessionId}/events/stream`,
@@ -64,20 +86,8 @@ describe("Live Server-Sent Events (SSE) Streaming API", () => {
     );
     sseReq.end();
 
-    // Wait 100ms for connection to establish
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Trigger review workflow in background
-    await orchestrator.executeReviewWorkflow({
-      sessionId,
-      targetId: "staging-demo",
-      repo: "mohitpargaie002-a11y/SchemaSentinel",
-      migrationFilePath: "migrations/0038_add_order_status.sql",
-      userPrompt: "Review migration",
-    });
-
-    // Wait for stream to receive events
-    await new Promise((r) => setTimeout(r, 400));
+    await reviewPromise;
+    await new Promise((r) => setTimeout(r, 300));
     sseReq.destroy();
 
     const fullStreamOutput = receivedChunks.join("");

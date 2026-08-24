@@ -230,7 +230,10 @@ export class TrueForgeOrchestrator {
       rawPayload: unknown,
       confidence: number = 1.0
     ): EvidenceItem => {
-      const contentHash = this.computeSha256(rawPayload as object);
+      const rawSnapshot = rawPayload !== undefined && rawPayload !== null
+        ? JSON.parse(JSON.stringify(rawPayload))
+        : rawPayload;
+      const contentHash = this.computeSha256(rawSnapshot as object);
       const evidence: EvidenceItem = {
         evidenceId: `evi_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         sessionId: params.sessionId,
@@ -240,7 +243,7 @@ export class TrueForgeOrchestrator {
         timestamp: new Date().toISOString(),
         summary,
         contentHash,
-        rawReference: rawPayload,
+        rawReference: rawSnapshot,
         confidence,
       };
       evidenceItems.push(evidence);
@@ -581,7 +584,10 @@ export class TrueForgeOrchestrator {
       confidence: number = 1.0
     ): EvidenceItem => {
       if (!session.evidenceItems) session.evidenceItems = [];
-      const contentHash = this.computeSha256(rawPayload as object);
+      const rawSnapshot = rawPayload !== undefined && rawPayload !== null
+        ? JSON.parse(JSON.stringify(rawPayload))
+        : rawPayload;
+      const contentHash = this.computeSha256(rawSnapshot as object);
       const evidence: EvidenceItem = {
         evidenceId: `evi_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         sessionId: params.sessionId,
@@ -591,7 +597,7 @@ export class TrueForgeOrchestrator {
         timestamp: new Date().toISOString(),
         summary,
         contentHash,
-        rawReference: rawPayload,
+        rawReference: rawSnapshot,
         confidence,
       };
       session.evidenceItems.push(evidence);
@@ -642,7 +648,13 @@ export class TrueForgeOrchestrator {
         session.plan!.id,
         session.plan!.rawSql,
         params.approvalToken,
-        session.plan
+        session.plan,
+        async () => {
+          session.status = transitionSessionState(session.status, "VERIFYING");
+          this.broadcaster.emitStateChange(params.sessionId, session.status);
+          recordEvent("VERIFICATION_STARTED", "STARTED", "Running deterministic post-apply verification queries...");
+          emitActivity("SYSTEM", "RUNNING", "VERIFICATION", `Running live post-apply invariant checks`);
+        }
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -663,15 +675,9 @@ export class TrueForgeOrchestrator {
     recordEvent("STAGING_APPLY_COMPLETED", applyResult.success ? "COMPLETED" : "FAILED", `DDL execution finished with status '${applyResult.status}'.`);
     emitActivity("ORCHESTRATOR", applyResult.success ? "COMPLETED" : "FAILED", "STAGING_APPLY", `DDL execution finished with status '${applyResult.status}'`);
 
-    // Verification Step
+    // Verification Step Result Processing
     if (applyResult.verificationResult) {
       session.verificationResult = applyResult.verificationResult;
-      session.status = transitionSessionState(session.status, "VERIFYING");
-      this.broadcaster.emitStateChange(params.sessionId, session.status);
-
-      recordEvent("VERIFICATION_STARTED", "STARTED", "Running deterministic post-apply verification queries...");
-      emitActivity("SYSTEM", "RUNNING", "VERIFICATION", `Running ${applyResult.verificationResult.checks.length} live post-apply invariant checks`);
-
       const verificationEvidence = recordEvidence(
         `postgres://${session.targetId}/post-apply-verification`,
         "VERIFICATION_QUERY",

@@ -249,8 +249,11 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
           const evidence = JSON.parse(e.data);
           if (!currentSessionData.evidenceItems) currentSessionData.evidenceItems = [];
-          currentSessionData.evidenceItems.push(evidence);
-          updateProvenanceDisplay();
+          const exists = currentSessionData.evidenceItems.some((item) => item.evidenceId === evidence.evidenceId);
+          if (!exists) {
+            currentSessionData.evidenceItems.push(evidence);
+            updateProvenanceDisplay();
+          }
         } catch (err) {
           console.error("Failed to parse SSE evidence event:", err);
         }
@@ -266,11 +269,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       activeEventSource.addEventListener("close", () => {
-        if (liveStreamBadge) liveStreamBadge.textContent = "Core Online";
-        if (activeEventSource) {
-          activeEventSource.close();
-          activeEventSource = null;
-        }
+        closeEventStream();
       });
 
       activeEventSource.onerror = () => {
@@ -278,6 +277,16 @@ document.addEventListener("DOMContentLoaded", () => {
       };
     } catch (e) {
       console.warn("EventSource not supported or connection error:", e);
+    }
+  }
+
+  function closeEventStream() {
+    if (activeEventSource) {
+      activeEventSource.close();
+      activeEventSource = null;
+    }
+    if (liveStreamBadge) {
+      liveStreamBadge.textContent = "Core Online";
     }
   }
 
@@ -486,7 +495,10 @@ document.addEventListener("DOMContentLoaded", () => {
     approvalTarget.textContent = session.targetId;
     approvalEnv.textContent = session.targetId === "prod-postgres" ? "production" : "staging";
     approvalFingerprint.textContent = session.approvalPacket?.sqlFingerprint || session.approvalCheckpoint?.sqlFingerprint || "SHA-256 Verified";
-    approvalToken.textContent = session.approvalPacket?.approvalToken || session.approvalCheckpoint?.token || "sat_... (REDACTED)";
+    const rawTok = session.approvalPacket?.approvalToken || session.approvalCheckpoint?.token;
+    approvalToken.textContent = rawTok
+      ? (rawTok.startsWith("sat_") && rawTok.length > 10 ? `sat_...${rawTok.slice(-6)} (REDACTED)` : "sat_... (REDACTED)")
+      : "sat_... (REDACTED)";
 
     if (session.status === "AWAITING_APPROVAL" && !isReadOnlyMode) {
       approvalWarning.style.display = "flex";
@@ -659,6 +671,7 @@ document.addEventListener("DOMContentLoaded", () => {
       loadSessionHistory();
       announce("Safety review completed. Human approval required before mutation.");
     } catch (err) {
+      closeEventStream();
       alert(`Review Failed: ${err.message}`);
     } finally {
       btnStartReview.disabled = false;

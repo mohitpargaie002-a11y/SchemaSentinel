@@ -8,12 +8,17 @@ export interface StreamListener {
   onClose?: () => void;
 }
 
+const MAX_CACHED_EVENTS_PER_SESSION = 500;
+const MAX_CACHED_EVIDENCE_PER_SESSION = 100;
+const TERMINAL_SESSION_CLEANUP_MS = 60000; // 60s grace period for reconnect before clearing in-memory buffer
+
 export class SessionEventBroadcaster {
   private static instance: SessionEventBroadcaster;
   private readonly emitter = new EventEmitter();
   private readonly eventHistory = new Map<string, AgentActivityEvent[]>();
   private readonly evidenceHistory = new Map<string, EvidenceItem[]>();
   private readonly activeListeners = new Map<string, Set<StreamListener>>();
+  private readonly cleanupTimers = new Map<string, NodeJS.Timeout>();
 
   private constructor() {
     this.emitter.setMaxListeners(200);
@@ -33,15 +38,20 @@ export class SessionEventBroadcaster {
     if (!this.eventHistory.has(sessionId)) {
       this.eventHistory.set(sessionId, []);
     }
-    this.eventHistory.get(sessionId)!.push(event);
+    const history = this.eventHistory.get(sessionId)!;
+    if (history.length >= MAX_CACHED_EVENTS_PER_SESSION) {
+      history.shift();
+    }
+    history.push(event);
 
     const listeners = this.activeListeners.get(sessionId);
     if (listeners) {
       for (const listener of listeners) {
         try {
           listener.onActivityEvent(event);
-        } catch {
-          // Ignore listener errors
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[EventBroadcaster Error]: Exception in activity listener for session '${sessionId}': ${msg}`);
         }
       }
     }
@@ -55,7 +65,11 @@ export class SessionEventBroadcaster {
     if (!this.evidenceHistory.has(sessionId)) {
       this.evidenceHistory.set(sessionId, []);
     }
-    this.evidenceHistory.get(sessionId)!.push(evidence);
+    const history = this.evidenceHistory.get(sessionId)!;
+    if (history.length >= MAX_CACHED_EVIDENCE_PER_SESSION) {
+      history.shift();
+    }
+    history.push(evidence);
 
     const listeners = this.activeListeners.get(sessionId);
     if (listeners) {
@@ -63,8 +77,9 @@ export class SessionEventBroadcaster {
         if (listener.onEvidenceItem) {
           try {
             listener.onEvidenceItem(evidence);
-          } catch {
-            // Ignore listener errors
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[EventBroadcaster Error]: Exception in evidence listener for session '${sessionId}': ${msg}`);
           }
         }
       }
@@ -82,8 +97,9 @@ export class SessionEventBroadcaster {
         if (listener.onStateChange) {
           try {
             listener.onStateChange(status);
-          } catch {
-            // Ignore listener errors
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[EventBroadcaster Error]: Exception in state listener for session '${sessionId}': ${msg}`);
           }
         }
       }
@@ -92,7 +108,7 @@ export class SessionEventBroadcaster {
   }
 
   /**
-   * Close a session's event stream
+   * Close a session's event stream and schedule cleanup of in-memory replay buffers
    */
   public closeSessionStream(sessionId: string): void {
     const listeners = this.activeListeners.get(sessionId);
@@ -101,14 +117,27 @@ export class SessionEventBroadcaster {
         if (listener.onClose) {
           try {
             listener.onClose();
-          } catch {
-            // Ignore listener errors
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[EventBroadcaster Error]: Exception in close listener for session '${sessionId}': ${msg}`);
           }
         }
       }
       this.activeListeners.delete(sessionId);
     }
     this.emitter.emit(`close:${sessionId}`);
+
+    // Schedule cleanup of memory caches after grace period for reconnecting clients
+    if (!this.cleanupTimers.has(sessionId)) {
+      const timer = setTimeout(() => {
+        this.clearSession(sessionId);
+        this.cleanupTimers.delete(sessionId);
+      }, TERMINAL_SESSION_CLEANUP_MS);
+      if (timer.unref) {
+        timer.unref();
+      }
+      this.cleanupTimers.set(sessionId, timer);
+    }
   }
 
   /**
@@ -125,8 +154,9 @@ export class SessionEventBroadcaster {
     for (const evt of history) {
       try {
         listener.onActivityEvent(evt);
-      } catch {
-        // Ignore listener error
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[EventBroadcaster Error]: Exception replaying activity event for session '${sessionId}': ${msg}`);
       }
     }
 
@@ -136,8 +166,9 @@ export class SessionEventBroadcaster {
       if (listener.onEvidenceItem) {
         try {
           listener.onEvidenceItem(evi);
-        } catch {
-          // Ignore listener error
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[EventBroadcaster Error]: Exception replaying evidence item for session '${sessionId}': ${msg}`);
         }
       }
     }
@@ -171,6 +202,11 @@ export class SessionEventBroadcaster {
    * Clear session history from memory
    */
   public clearSession(sessionId: string): void {
+    const timer = this.cleanupTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.cleanupTimers.delete(sessionId);
+    }
     this.eventHistory.delete(sessionId);
     this.evidenceHistory.delete(sessionId);
     this.activeListeners.delete(sessionId);

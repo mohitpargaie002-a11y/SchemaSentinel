@@ -132,8 +132,16 @@ async function runDay5Proof() {
     broadcaster,
   });
 
-  const testPort = 3098;
-  await new Promise<void>((resolve) => server.listen(testPort, resolve));
+  let testPort = 0;
+  await new Promise<void>((resolve) => {
+    server.listen(0, () => {
+      const addr = server.address();
+      if (addr && typeof addr === "object") {
+        testPort = addr.port;
+      }
+      resolve();
+    });
+  });
   console.log(`🌐 Server listening on http://localhost:${testPort}`);
 
   const healthRes = await fetch(`http://localhost:${testPort}/api/health`);

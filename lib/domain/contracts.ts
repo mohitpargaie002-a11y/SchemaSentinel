@@ -48,7 +48,14 @@ export const VALID_SESSION_TRANSITIONS: Record<SessionStatus, SessionStatus[]> =
   VERIFICATION_FAILED: [], // Terminal
 };
 
-export class StateTransitionError extends Error {
+export class SentinelError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SentinelError";
+  }
+}
+
+export class StateTransitionError extends SentinelError {
   constructor(public readonly current: SessionStatus, public readonly next: SessionStatus) {
     super(`Illegal state transition from '${current}' to '${next}'. State machine fails closed.`);
     this.name = "StateTransitionError";

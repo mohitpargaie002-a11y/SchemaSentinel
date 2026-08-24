@@ -3,12 +3,13 @@ import * as path from "path";
 import {
   PersistedSessionState,
   PersistedSessionStateSchema,
+  SentinelError,
 } from "../domain/contracts.js";
 
 export type { PersistedSessionState };
 export { PersistedSessionStateSchema };
 
-export class SessionPersistenceError extends Error {
+export class SessionPersistenceError extends SentinelError {
   constructor(message: string) {
     super(`[SessionPersistence Error]: ${message}`);
     this.name = "SessionPersistenceError";
@@ -86,7 +87,7 @@ export class FileSessionStore implements ISessionStore {
       this.memoryFallback.set(sessionId, validated);
       return validated;
     } catch (err: unknown) {
-      if (err instanceof Error && "code" in err && (err as { code: string }).code === "ENOENT") {
+      if (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "ENOENT") {
         return this.memoryFallback.get(sessionId) || null;
       }
       if (err instanceof Error && err.name === "ZodError") {

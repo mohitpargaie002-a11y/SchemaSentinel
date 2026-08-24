@@ -1,6 +1,7 @@
 import { TargetConfig } from "../domain/contracts.js";
+import { SentinelError } from "../domain/contracts.js";
 
-export class TargetNotAllowedError extends Error {
+export class TargetNotAllowedError extends SentinelError {
   constructor(message: string) {
     super(`[Target Security Error]: ${message}`);
     this.name = "TargetNotAllowedError";
