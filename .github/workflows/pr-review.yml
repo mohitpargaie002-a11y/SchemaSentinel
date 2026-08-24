@@ -36,7 +36,13 @@ jobs:
       - name: Qodo PR Agent Review
         uses: Codium-ai/pr-agent@main
         env:
-          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY || secrets.QODO_API_KEY }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          pr_reviewer.require_focused_pr: true
-          pr_reviewer.require_score_review: true
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          pr_reviewer.require_focused_pr: "true"
+          pr_reviewer.require_score_review: "true"
+          pr_reviewer.require_security_review: "true"
+          pr_reviewer.require_tests: "true"
