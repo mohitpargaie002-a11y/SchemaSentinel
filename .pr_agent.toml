@@ -1,0 +1,20 @@
+# Qodo PR-Agent Configuration for SchemaSentinel
+
+[pr_reviewer]
+require_focused_pr = true
+require_score_review = true
+require_tests = true
+require_security_review = true
+num_code_suggestions = 4
+extra_instructions = """
+Ensure strict adherence to SchemaSentinel safety boundaries and architectural standards defined in AGENTS.md:
+1. Zero mutation on target databases without an explicit, valid TrueForge human approval checkpoint token.
+2. Tamper-evident approval tokens cryptographically bound by SHA-256(sessionId + planId + targetId + exact_sql).
+3. Target allowlisting: connections to arbitrary user-supplied database URLs are strictly prohibited.
+4. Readonly diagnostics must enforce AST/keyword mutation rejection.
+5. Strict TypeScript (no 'any') with zod schema validation.
+"""
+
+[pr_description]
+publish_labels = true
+use_description_markers = true
