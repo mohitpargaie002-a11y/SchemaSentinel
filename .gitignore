@@ -12,3 +12,4 @@ coverage/
 *.tsbuildinfo
 .system_generated/
 sandbox/fixtures/temp/
+.schemasentinel/

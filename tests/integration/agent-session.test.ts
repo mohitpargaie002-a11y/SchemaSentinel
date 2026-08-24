@@ -22,12 +22,12 @@ describe("AgentSession - End-to-End Migration Review Vertical Slice", () => {
 
     // 2. Timeline Verification
     const stepNames = result.context.timeline.map((t) => t.step);
-    expect(stepNames).toContain("IDENTIFY_REQUEST");
-    expect(stepNames).toContain("READ_MIGRATION");
-    expect(stepNames).toContain("INSPECT_SCHEMA");
-    expect(stepNames).toContain("ANALYZE_MIGRATION");
-    expect(stepNames).toContain("SANDBOX_EXECUTION");
-    expect(stepNames).toContain("HUMAN_APPROVAL_CHECKPOINT");
+    expect(stepNames).toContain("REQUEST_RECEIVED");
+    expect(stepNames).toContain("MIGRATION_READ");
+    expect(stepNames).toContain("SCHEMA_INSPECTED");
+    expect(stepNames).toContain("ANALYSIS_COMPLETED");
+    expect(stepNames).toContain("SANDBOX_COMPLETED");
+    expect(stepNames).toContain("APPROVAL_REQUESTED");
 
     // 3. Sandbox Invariant Validation
     expect(result.approvalPacket.sandboxStatus).toBe("PASS");

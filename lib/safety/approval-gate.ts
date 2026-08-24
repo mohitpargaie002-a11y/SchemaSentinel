@@ -27,6 +27,7 @@ export interface IApprovalGate {
     targetId: string,
     rawSql: string
   ): ApprovalCheckpoint;
+  restoreCheckpoint(checkpoint: ApprovalCheckpoint): void;
   revokeToken(token: string): void;
 }
 
@@ -78,6 +79,15 @@ export class ApprovalGate implements IApprovalGate {
 
     this.approvedTokens.set(token, checkpoint);
     return checkpoint;
+  }
+
+  /**
+   * Restores a persisted approval checkpoint (e.g. across process restarts).
+   */
+  public restoreCheckpoint(checkpoint: ApprovalCheckpoint): void {
+    if (checkpoint && checkpoint.token) {
+      this.approvedTokens.set(checkpoint.token, checkpoint);
+    }
   }
 
   /**
