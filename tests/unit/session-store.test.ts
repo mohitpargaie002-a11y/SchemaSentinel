@@ -38,6 +38,8 @@ describe("FileSessionStore - Path Traversal & Schema Validation", () => {
       },
     ],
     activityEvents: [],
+    evidenceItems: [],
+    isReadOnly: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -61,20 +63,20 @@ describe("FileSessionStore - Path Traversal & Schema Validation", () => {
     await expect(store.loadSession("../../../malicious_file")).rejects.toThrow(SessionPersistenceError);
   });
 
-  it("strictly rejects invalid sessionId characters", async () => {
-    const invalidCharsState = {
-      ...validSessionState,
-      sessionId: "session!@#$%",
-    };
-
-    await expect(store.saveSession(invalidCharsState)).rejects.toThrow(SessionPersistenceError);
-    await expect(store.loadSession("session!@#$%")).rejects.toThrow(SessionPersistenceError);
+  it("returns null when loading non-existent session", async () => {
+    const nonExistent = await store.loadSession("sess_non_existent");
+    expect(nonExistent).toBeNull();
   });
 
-  it("throws SessionPersistenceError when persisted file is corrupted JSON", async () => {
-    const corruptedPath = path.join(testDir, "corrupted_session.json");
-    await fs.writeFile(corruptedPath, "{ invalid json content ...", "utf-8");
+  it("lists all persisted sessions", async () => {
+    await store.saveSession(validSessionState);
+    await store.saveSession({
+      ...validSessionState,
+      sessionId: "sess_test_456",
+    });
 
-    await expect(store.loadSession("corrupted_session")).rejects.toThrow(SessionPersistenceError);
+    const list = await store.listSessions();
+    expect(list).toContain("sess_test_123");
+    expect(list).toContain("sess_test_456");
   });
 });

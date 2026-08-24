@@ -28,14 +28,49 @@
         </div>
       </div>
 
-      <div class="header-status">
-        <div class="status-pill" id="system-status-pill">
-          <span class="status-dot"></span>
-          <span>Core Online</span>
+      <div class="header-actions">
+        <!-- History Toggle Button -->
+        <button id="btn-history-toggle" class="btn btn-secondary btn-sm" aria-expanded="false" aria-controls="history-drawer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span>History</span>
+          <span class="badge badge-neutral" id="history-count-badge">0</span>
+        </button>
+
+        <div class="header-status">
+          <div class="status-pill" id="system-status-pill">
+            <span class="status-dot"></span>
+            <span id="live-stream-badge">Core Online</span>
+          </div>
         </div>
       </div>
     </div>
   </header>
+
+  <!-- Session History Drawer (Overlay / Dropdown) -->
+  <div id="history-drawer" class="history-drawer" style="display: none;" role="region" aria-label="Session History">
+    <div class="history-drawer-header">
+      <div>
+        <h2 class="drawer-title">Session History</h2>
+        <p class="drawer-subtitle">Select a past run to inspect provenance, evidence, and audit logs in read-only mode.</p>
+      </div>
+      <button id="btn-close-history" class="btn-icon" aria-label="Close History">✕</button>
+    </div>
+    <div id="history-list" class="history-list">
+      <div class="history-empty">No previous sessions found.</div>
+    </div>
+  </div>
+
+  <!-- Read-Only Mode Banner -->
+  <div id="readonly-banner" class="readonly-banner" style="display: none;" role="alert">
+    <div class="readonly-inner">
+      <span class="readonly-icon">🔒</span>
+      <span class="readonly-text" id="readonly-text">Viewing historical session in read-only mode. Start a new safety review to analyze modifications.</span>
+      <button id="btn-exit-readonly" class="btn btn-secondary btn-xs">Start New Review</button>
+    </div>
+  </div>
 
   <!-- Main Container -->
   <main class="app-main">
@@ -293,20 +328,32 @@
       </div>
     </div>
 
-    <!-- Deep Evidence Explorer Tabs -->
+    <!-- Deep Evidence Explorer Tabs with Provenance -->
     <section class="panel evidence-panel" aria-labelledby="evidence-heading">
       <div class="panel-header">
         <div>
           <h2 id="evidence-heading" class="panel-title">Deep evidence & audit explorer</h2>
-          <p class="panel-subtitle">Low-level AST, catalog snapshot, sandbox logs, and cryptographic audit records</p>
+          <p class="panel-subtitle">Low-level AST, catalog snapshot, sandbox logs, cryptographic audit records, and provenance</p>
         </div>
       </div>
 
       <div class="evidence-tabs" role="tablist">
         <button class="tab-button active" role="tab" aria-selected="true" data-tab="tab-sql">Migration SQL</button>
         <button class="tab-button" role="tab" aria-selected="false" data-tab="tab-schema">Target Schema</button>
+        <button class="tab-button" role="tab" aria-selected="false" data-tab="tab-risk">Risk Evidence</button>
         <button class="tab-button" role="tab" aria-selected="false" data-tab="tab-sandbox">Sandbox Logs</button>
+        <button class="tab-button" role="tab" aria-selected="false" data-tab="tab-verification">Verification</button>
         <button class="tab-button" role="tab" aria-selected="false" data-tab="tab-audit">Audit Ledger</button>
+      </div>
+
+      <!-- Provenance Header Strip -->
+      <div class="provenance-strip" id="provenance-strip">
+        <div class="provenance-badge-group">
+          <span class="prov-tag">Source: <strong id="prov-source">—</strong></span>
+          <span class="prov-tag">Actor: <strong id="prov-actor">—</strong></span>
+          <span class="prov-tag">Captured: <strong id="prov-time">—</strong></span>
+          <span class="prov-tag">SHA-256: <strong id="prov-hash" class="font-mono text-truncate">—</strong></span>
+        </div>
       </div>
 
       <div class="evidence-content">
@@ -316,8 +363,14 @@
         <div id="tab-schema" class="tab-pane" role="tabpanel" style="display: none;">
           <pre class="code-block"><code id="evidence-schema">// Target PostgreSQL catalog snapshot JSON.</code></pre>
         </div>
+        <div id="tab-risk" class="tab-pane" role="tabpanel" style="display: none;">
+          <pre class="code-block"><code id="evidence-risk">// Risk AST analysis, lock graph, and table rewrite evaluations.</code></pre>
+        </div>
         <div id="tab-sandbox" class="tab-pane" role="tabpanel" style="display: none;">
           <pre class="code-block"><code id="evidence-sandbox">// PGlite dry-run execution results and assertion checks.</code></pre>
+        </div>
+        <div id="tab-verification" class="tab-pane" role="tabpanel" style="display: none;">
+          <pre class="code-block"><code id="evidence-verification">// Post-apply invariant assertion results and smoke query outputs.</code></pre>
         </div>
         <div id="tab-audit" class="tab-pane" role="tabpanel" style="display: none;">
           <pre class="code-block"><code id="evidence-audit">// Cryptographic audit log entries and tokens.</code></pre>
@@ -331,7 +384,7 @@
   <footer class="app-footer">
     <div class="footer-inner">
       <span>SchemaSentinel · TrueForge Agent Harness Hackathon</span>
-      <span>Postgres MCP · GitHub MCP · PGlite Sandbox · Qodo Quality Gate</span>
+      <span>Postgres MCP · GitHub MCP · PGlite Sandbox · Qodo Quality Gate · Live EventStream</span>
     </div>
   </footer>
 

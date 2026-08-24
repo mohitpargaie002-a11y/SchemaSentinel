@@ -1,21 +1,21 @@
-# HANDOFF.md — SchemaSentinel Phase 4 Handoff
+# HANDOFF.md — SchemaSentinel Phase 5 Handoff
 
-## Current Status: Phase 4 Complete
+## Current Status: Phase 5 Complete
 
 ### Completed Capabilities:
-1. **Specialized Subagent Architecture**:
-   - `SchemaAnalystSubagent`: Read-only schema introspection via PostgreSQL MCP.
-   - `RiskAnalystSubagent`: Static locking, table rewrite, and constraint hazard detection.
-   - `SandboxValidatorSubagent`: Isolated PGlite sandbox execution and rollback validation.
-   - `ReviewSynthesizerSubagent`: Multi-agent evidence synthesis and approval packet creation.
-   - `TrueForgeOrchestrator`: Multi-agent orchestration, event emission, session continuity, controlled apply, and post-apply invariant verification.
-2. **Activity Event & Observability Model**:
-   - Typed `AgentActivityEvent` model persisted with session state.
-3. **HTTP Server API & Web UI**:
-   - Native Node HTTP Server providing REST APIs (`/api/health`, `/api/targets`, `/api/sessions`, `/api/sessions/:id`, `/api/sessions/:id/events`, `/api/sessions/:id/approve`, `/api/sessions/:id/reject`).
-   - High-aesthetic mission control dashboard (`public/index.html`, `public/style.css`, `public/app.js`) with live agent timelines, quantitative risk matrix, staged plan, and human approval boundary.
-4. **Testing & Quality Gates**:
-   - Comprehensive unit and integration test suites passing.
+1. **Live Server-Sent Events (SSE) Stream**:
+   - Implemented real-time event broadcaster in `SessionEventBroadcaster` (`lib/agent/event-stream.ts`).
+   - Added endpoint `GET /api/sessions/:id/events/stream` streaming activity events, evidence provenance, and state transitions with client reconnect replay.
+2. **Controlled Subagent Parallelization**:
+   - Parallelized read-only schema inspection and AST parsing in `TrueForgeOrchestrator` while strictly serializing dependent validation and mutation stages.
+3. **Evidence Provenance & Integrity Model**:
+   - Typed `EvidenceItem` model with deterministic SHA-256 content hashes for all artifacts (`MIGRATION_FILE`, `POSTGRES_SCHEMA`, `RISK_ANALYSIS`, `SANDBOX_EXECUTION`, `VERIFICATION_QUERY`, `SYSTEM`).
+4. **Formal Session State Machine**:
+   - Standardized state transitions (`CREATED` → `RUNNING` → `REVIEW_READY` → `AWAITING_APPROVAL` → `APPROVED` → `APPLYING` → `VERIFYING` → `COMPLETED`) with strict fail-closed enforcement.
+5. **Session History & Switching**:
+   - Summarized history endpoint `GET /api/sessions` and interactive session drawer in the UI with read-only historical inspection.
+6. **Testing & Quality Gates**:
+   - 72 / 72 automated unit, integration, and security tests passing.
    - Strict TypeScript, clean lint, clean build.
 
 ### Running Commands:
@@ -28,8 +28,8 @@ npm run build
 npm run typecheck
 npm run lint
 
-# Run Phase 4 Demo Script
-npm run demo:day4
+# Run Phase 5 Demo Script
+npm run demo:day5
 
 # Launch Mission Control Web UI
 npm run serve

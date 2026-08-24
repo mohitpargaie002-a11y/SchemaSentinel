@@ -37,7 +37,7 @@ async function main() {
   });
 
   console.log("\n📜 PRE-APPROVAL TIMELINE:");
-  reviewResult.context.timeline.forEach((t) => {
+  reviewResult.context.timeline.forEach((t: { status: string; step: string; details: string }) => {
     const icon = t.status === "COMPLETED" ? "✓" : t.status === "STARTED" ? "●" : "🔒";
     console.log(`  ${icon} [${t.step}] (${t.status}): ${t.details}`);
   });
@@ -111,7 +111,7 @@ async function main() {
   console.log(`Verification Status   : ${vResult?.status.toUpperCase()}`);
   console.log(`Execution Time        : ${vResult?.executionDurationMs}ms`);
   console.log("Invariant Checks:");
-  vResult?.checks.forEach((check, idx) => {
+  vResult?.checks.forEach((check: { passed: boolean; name: string; details: string }, idx: number) => {
     console.log(`  ${idx + 1}. [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.details}`);
   });
 

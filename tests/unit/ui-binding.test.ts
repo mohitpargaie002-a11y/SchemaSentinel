@@ -12,6 +12,18 @@ describe("UI Data Binding & Visual Contract Tests", () => {
 
     // Required core UI Element IDs
     const requiredElementIds = [
+      // Header & Status
+      "aria-live-announcer",
+      "live-stream-badge",
+      "btn-history-toggle",
+      "history-drawer",
+      "history-list",
+      "history-count-badge",
+      "btn-close-history",
+      "readonly-banner",
+      "readonly-text",
+      "btn-exit-readonly",
+
       // Request bar
       "migration-form",
       "target-select",
@@ -19,7 +31,6 @@ describe("UI Data Binding & Visual Contract Tests", () => {
       "btn-start-review",
       "btn-label",
       "btn-spinner",
-      "aria-live-announcer",
       
       // Subagents
       "agent-schema-analyst",
@@ -76,10 +87,17 @@ describe("UI Data Binding & Visual Contract Tests", () => {
       "timeline-feed",
       "event-count-badge",
 
-      // Deep Evidence Tabs
+      // Deep Evidence Tabs & Provenance
+      "provenance-strip",
+      "prov-source",
+      "prov-actor",
+      "prov-time",
+      "prov-hash",
       "evidence-sql",
       "evidence-schema",
+      "evidence-risk",
       "evidence-sandbox",
+      "evidence-verification",
       "evidence-audit",
     ];
 

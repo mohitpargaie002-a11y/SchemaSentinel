@@ -21,7 +21,7 @@ describe("AgentSession - End-to-End Migration Review Vertical Slice", () => {
     expect(result.context.plan?.rawSql).toBeDefined();
 
     // 2. Timeline Verification
-    const stepNames = result.context.timeline.map((t) => t.step);
+    const stepNames = result.context.timeline.map((t: { step: string }) => t.step);
     expect(stepNames).toContain("REQUEST_RECEIVED");
     expect(stepNames).toContain("MIGRATION_READ");
     expect(stepNames).toContain("SCHEMA_INSPECTED");

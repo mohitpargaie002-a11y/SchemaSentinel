@@ -1,9 +1,11 @@
+import * as crypto from "crypto";
 import { IGithubMcpService, defaultGithubMcpService } from "../mcp/github.js";
 import { IPostgresMcpService, defaultPostgresMcpService } from "../mcp/postgres.js";
 import { IApprovalGate, defaultApprovalGate } from "../safety/approval-gate.js";
 import { ISessionStore, defaultSessionStore, PersistedSessionState } from "./session-store.js";
 import { IPostApplyVerifier, PostApplyVerifier } from "../safety/post-apply-verifier.js";
 import { TargetRegistry, defaultTargetRegistry } from "../safety/target-allowlist.js";
+import { SessionEventBroadcaster } from "./event-stream.js";
 import {
   ISchemaAnalystSubagent,
   SchemaAnalystSubagent,
@@ -26,6 +28,8 @@ import {
   AgentRole,
   AgentTimelineEvent,
   ApplyResult,
+  EvidenceItem,
+  EvidenceSourceType,
   MigrationPlan,
   MigrationReviewReport,
   RiskAnalysisResult,
@@ -35,6 +39,7 @@ import {
   SchemaSnapshot,
   TrueForgeApprovalPacket,
   VerificationResult,
+  transitionSessionState,
 } from "../domain/contracts.js";
 import { ComprehensiveRiskReport } from "./risk-analyzer.js";
 
@@ -47,6 +52,7 @@ export interface OrchestrationResult {
   sandboxOutput: SandboxValidationOutput;
   reviewReport: MigrationReviewReport;
   activityEvents: AgentActivityEvent[];
+  evidenceItems: EvidenceItem[];
 }
 
 export class TrueForgeOrchestrator {
@@ -56,6 +62,7 @@ export class TrueForgeOrchestrator {
   private sessionStore: ISessionStore;
   private targetRegistry: TargetRegistry;
   private verifier: IPostApplyVerifier;
+  private broadcaster: SessionEventBroadcaster;
 
   // Specialized Subagents
   private schemaAnalyst: ISchemaAnalystSubagent;
@@ -73,7 +80,8 @@ export class TrueForgeOrchestrator {
     sandboxValidator?: ISandboxValidatorSubagent,
     reviewSynthesizer?: IReviewSynthesizerSubagent,
     verifier?: IPostApplyVerifier,
-    targetRegistry?: TargetRegistry
+    targetRegistry?: TargetRegistry,
+    broadcaster?: SessionEventBroadcaster
   ) {
     this.postgresMcp = postgresMcp;
     this.githubMcp = githubMcp;
@@ -81,11 +89,20 @@ export class TrueForgeOrchestrator {
     this.sessionStore = sessionStore;
     this.targetRegistry = targetRegistry || defaultTargetRegistry;
     this.verifier = verifier || new PostApplyVerifier(postgresMcp);
+    this.broadcaster = broadcaster || SessionEventBroadcaster.getInstance();
 
     this.schemaAnalyst = schemaAnalyst || new SchemaAnalystSubagent(postgresMcp);
     this.riskAnalyst = riskAnalyst || new RiskAnalystSubagent();
     this.sandboxValidator = sandboxValidator || new SandboxValidatorSubagent();
     this.reviewSynthesizer = reviewSynthesizer || new ReviewSynthesizerSubagent(approvalGate);
+  }
+
+  /**
+   * Generates a deterministic SHA-256 hash for immutable evidence payloads.
+   */
+  private computeSha256(content: string | object): string {
+    const raw = typeof content === "string" ? content : JSON.stringify(content);
+    return crypto.createHash("sha256").update(raw, "utf-8").digest("hex");
   }
 
   /**
@@ -159,7 +176,7 @@ export class TrueForgeOrchestrator {
 
   /**
    * Executes the multi-subagent TrueForge Migration Review pipeline.
-   * Emits fine-grained activity events and halts at the human approval gate.
+   * Emits fine-grained live SSE activity events, records evidence provenance, and halts at the human approval gate.
    */
   public async executeReviewWorkflow(params: {
     sessionId: string;
@@ -176,6 +193,7 @@ export class TrueForgeOrchestrator {
 
     const timeline: AgentTimelineEvent[] = [];
     const activityEvents: AgentActivityEvent[] = [];
+    const evidenceItems: EvidenceItem[] = [];
 
     const emitActivity = (
       actor: AgentRole,
@@ -184,7 +202,8 @@ export class TrueForgeOrchestrator {
       message: string,
       evidence?: Record<string, unknown>,
       durationMs?: number,
-      toolName?: string
+      toolName?: string,
+      evidenceRef?: string
     ) => {
       const event: AgentActivityEvent = {
         id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -197,8 +216,36 @@ export class TrueForgeOrchestrator {
         evidence,
         durationMs,
         toolName,
+        evidenceRef,
       };
       activityEvents.push(event);
+      this.broadcaster.emitActivity(params.sessionId, event);
+    };
+
+    const recordEvidence = (
+      source: string,
+      sourceType: EvidenceSourceType,
+      actor: AgentRole,
+      summary: string,
+      rawPayload: unknown,
+      confidence: number = 1.0
+    ): EvidenceItem => {
+      const contentHash = this.computeSha256(rawPayload as object);
+      const evidence: EvidenceItem = {
+        evidenceId: `evi_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        sessionId: params.sessionId,
+        source,
+        sourceType,
+        actor,
+        timestamp: new Date().toISOString(),
+        summary,
+        contentHash,
+        rawReference: rawPayload,
+        confidence,
+      };
+      evidenceItems.push(evidence);
+      this.broadcaster.emitEvidence(params.sessionId, evidence);
+      return evidence;
     };
 
     const recordTimeline = (step: string, status: AgentTimelineEvent["status"], details: string) => {
@@ -210,6 +257,10 @@ export class TrueForgeOrchestrator {
       });
     };
 
+    // State Machine: CREATED -> RUNNING
+    let currentSessionStatus = transitionSessionState("CREATED", "RUNNING");
+    this.broadcaster.emitStateChange(params.sessionId, currentSessionStatus);
+
     // 1. ORCHESTRATOR: Initialize
     recordTimeline("REQUEST_RECEIVED", "COMPLETED", `Received migration review request for target '${params.targetId}' and file '${params.migrationFilePath}'.`);
     emitActivity("ORCHESTRATOR", "COMPLETED", "INIT", `Initialized TrueForge review pipeline for target '${params.targetId}'`);
@@ -219,11 +270,21 @@ export class TrueForgeOrchestrator {
     emitActivity("ORCHESTRATOR", "RUNNING", "FETCH_MIGRATION", `Reading migration file '${params.migrationFilePath}'`, undefined, undefined, "github.get_file_contents");
     
     const migrationContent = await this.githubMcp.readMigrationFile(params.repo, params.migrationFilePath);
+    const sqlEvidence = recordEvidence(
+      params.migrationFilePath,
+      "MIGRATION_FILE",
+      "ORCHESTRATOR",
+      `Migration DDL SQL retrieved from GitHub repository (${migrationContent.length} bytes)`,
+      { path: params.migrationFilePath, content: migrationContent }
+    );
+
     recordTimeline("MIGRATION_READ", "COMPLETED", `Successfully retrieved migration payload (${migrationContent.length} bytes).`);
     emitActivity("ORCHESTRATOR", "COMPLETED", "FETCH_MIGRATION", `Retrieved ${migrationContent.length} bytes from GitHub MCP`, {
       path: params.migrationFilePath,
       sizeBytes: migrationContent.length,
-    });
+      evidenceId: sqlEvidence.evidenceId,
+      contentHash: sqlEvidence.contentHash,
+    }, undefined, "github.get_file_contents", sqlEvidence.evidenceId);
 
     const { affectedTables, migrationSummary, rollbackSql } = this.parsePlanMetadata(
       migrationContent,
@@ -241,30 +302,55 @@ export class TrueForgeOrchestrator {
       affectedTables: affectedTables.length > 0 ? affectedTables : ["orders"],
       rollbackSql,
       createdAt: new Date().toISOString(),
+      contentHash: sqlEvidence.contentHash,
+      evidenceId: sqlEvidence.evidenceId,
     };
 
-    // 3. SUBAGENT 1: Schema Analyst
+    // 3. PARALLEL READ-ONLY SPECIALIST ANALYSIS (Schema Analyst & Preliminary Risk Context)
+    // Controlled parallel execution: Independent preparatory AST checks and target catalog introspection run concurrently
     recordTimeline("SCHEMA_INSPECTED", "STARTED", `Inspecting target PostgreSQL database '${params.targetId}' via Schema Analyst subagent...`);
     emitActivity("SCHEMA_ANALYST", "RUNNING", "SCHEMA_INSPECTION", `Inspecting catalog for target '${params.targetId}'`, undefined, undefined, "postgres.inspect_schema");
-    
-    const schemaStart = Date.now();
-    const { snapshot: schemaSnapshot, analysis: schemaAnalysis } = await this.schemaAnalyst.analyzeSchema(
-      params.targetId,
-      plan.affectedTables
+    emitActivity("RISK_ANALYST", "RUNNING", "RISK_ANALYSIS", `Evaluating locking risks, table rewrites, and constraint hazards`, undefined, undefined, "risk_engine.evaluate");
+
+    const parallelStart = Date.now();
+    const [schemaResult] = await Promise.all([
+      this.schemaAnalyst.analyzeSchema(params.targetId, plan.affectedTables),
+      // Concurrently evaluate candidate AST syntax
+      this.riskAnalyst.analyzeMigrationRisk(plan.id, plan.rawSql, {
+        targetId: params.targetId,
+        timestamp: new Date().toISOString(),
+        tableCount: 0,
+        totalIndexCount: 0,
+        affectedTables: plan.affectedTables,
+        affectedTableDetails: [],
+        foreignKeyDependencies: [],
+        volumeEstimates: {},
+        summary: "Preliminary AST parsing",
+      }),
+    ]);
+    const { snapshot: schemaSnapshot, analysis: schemaAnalysis } = schemaResult;
+    const schemaDuration = Date.now() - parallelStart;
+
+    const schemaEvidence = recordEvidence(
+      `postgres://${params.targetId}/catalog`,
+      "POSTGRES_SCHEMA",
+      "SCHEMA_ANALYST",
+      `Target catalog snapshot for '${params.targetId}': ${schemaAnalysis.tableCount} tables, ${schemaAnalysis.totalIndexCount} indexes`,
+      schemaSnapshot
     );
-    const schemaDuration = Date.now() - schemaStart;
-    
+    schemaAnalysis.evidenceId = schemaEvidence.evidenceId;
+    schemaAnalysis.contentHash = schemaEvidence.contentHash;
+
     recordTimeline("SCHEMA_INSPECTED", "COMPLETED", `Schema snapshot completed: Discovered ${schemaSnapshot.tables.length} tables (${schemaSnapshot.tables.map(t => t.tableName).join(", ")}).`);
     emitActivity("SCHEMA_ANALYST", "COMPLETED", "SCHEMA_INSPECTION", schemaAnalysis.summary, {
       tableCount: schemaAnalysis.tableCount,
       indexCount: schemaAnalysis.totalIndexCount,
       affectedTables: schemaAnalysis.affectedTables,
-    }, schemaDuration);
+      evidenceId: schemaEvidence.evidenceId,
+      contentHash: schemaEvidence.contentHash,
+    }, schemaDuration, "postgres.inspect_schema", schemaEvidence.evidenceId);
 
-    // 4. SUBAGENT 2: Risk Analyst
-    recordTimeline("ANALYSIS_COMPLETED", "STARTED", `Running SchemaSentinel safety analysis via Risk Analyst subagent...`);
-    emitActivity("RISK_ANALYST", "RUNNING", "RISK_ANALYSIS", `Evaluating locking risks, table rewrites, and constraint hazards`, undefined, undefined, "risk_engine.evaluate");
-    
+    // 4. SUBAGENT 2: Risk Analyst (Refine risk with full schema snapshot)
     const riskStart = Date.now();
     const { riskReport, riskAnalysis } = await this.riskAnalyst.analyzeMigrationRisk(
       plan.id,
@@ -276,13 +362,25 @@ export class TrueForgeOrchestrator {
     plan.riskLevel = riskReport.overallRisk;
     plan.riskFactors = riskReport.findings.map((f) => f.title);
 
+    const riskEvidence = recordEvidence(
+      `risk-engine://eval/${plan.id}`,
+      "RISK_ANALYSIS",
+      "RISK_ANALYST",
+      `Risk Analysis: Overall Risk = ${riskReport.overallRisk}, Lock Risk = ${riskReport.lockRisk}, ${riskReport.findings.length} findings`,
+      { riskReport, riskAnalysis }
+    );
+    riskAnalysis.evidenceId = riskEvidence.evidenceId;
+    riskAnalysis.contentHash = riskEvidence.contentHash;
+
     recordTimeline("ANALYSIS_COMPLETED", "COMPLETED", `Risk Analysis Complete: Overall Risk = ${riskReport.overallRisk}, Lock Risk = ${riskReport.lockRisk}, Findings = ${riskReport.findings.length}.`);
     emitActivity("RISK_ANALYST", "COMPLETED", "RISK_ANALYSIS", riskAnalysis.summary, {
       overallRisk: riskAnalysis.overallRisk,
       lockRisk: riskAnalysis.lockRisk,
       tableRewriteExpected: riskAnalysis.tableRewriteExpected,
       findingsCount: riskAnalysis.findings.length,
-    }, riskDuration);
+      evidenceId: riskEvidence.evidenceId,
+      contentHash: riskEvidence.contentHash,
+    }, riskDuration, "risk_engine.evaluate", riskEvidence.evidenceId);
 
     // 5. SUBAGENT 3: Sandbox Validator
     recordTimeline("SANDBOX_COMPLETED", "STARTED", `Spinning up isolated PGlite PostgreSQL sandbox environment via Sandbox Validator...`);
@@ -296,11 +394,25 @@ export class TrueForgeOrchestrator {
     );
     const sandboxDuration = Date.now() - sandboxStart;
 
+    const sandboxEvidence = recordEvidence(
+      `pglite://sandbox/${plan.id}`,
+      "SANDBOX_EXECUTION",
+      "SANDBOX_VALIDATOR",
+      `PGlite isolated validation: ${sandboxResult.success ? "PASSED" : "FAILED"} in ${sandboxResult.executionDurationMs}ms (Rollback: ${sandboxResult.rollbackSuccessful ? "PASS" : "FAIL"})`,
+      { sandboxResult, sandboxOutput }
+    );
+    sandboxResult.evidenceId = sandboxEvidence.evidenceId;
+    sandboxResult.contentHash = sandboxEvidence.contentHash;
+    sandboxOutput.evidenceId = sandboxEvidence.evidenceId;
+    sandboxOutput.contentHash = sandboxEvidence.contentHash;
+
     recordTimeline("SANDBOX_COMPLETED", "COMPLETED", `Sandbox validation ${sandboxResult.success ? "PASSED" : "FAILED"} in ${sandboxResult.executionDurationMs}ms (Rollback: ${sandboxResult.rollbackSuccessful ? "PASS" : "FAIL"}).`);
     emitActivity("SANDBOX_VALIDATOR", "COMPLETED", "SANDBOX_VALIDATION", `Sandbox validation ${sandboxResult.success ? "PASSED" : "FAILED"}: ${sandboxResult.assertionsPassed.length} assertion(s) passed`, {
       assertionsPassed: sandboxResult.assertionsPassed,
       rollbackSuccessful: sandboxResult.rollbackSuccessful,
-    }, sandboxDuration);
+      evidenceId: sandboxEvidence.evidenceId,
+      contentHash: sandboxEvidence.contentHash,
+    }, sandboxDuration, "pglite.dry_run", sandboxEvidence.evidenceId);
 
     // 6. SUBAGENT 4: Review Synthesizer (derive actual target environment)
     const targetConfig = this.targetRegistry.getTarget(params.targetId);
@@ -319,7 +431,14 @@ export class TrueForgeOrchestrator {
       riskAnalysis,
       sandboxOutput,
     });
+    reviewReport.evidenceProvenance = evidenceItems.map((e) => e.evidenceId);
+
     emitActivity("REVIEW_SYNTHESIZER", "COMPLETED", "SYNTHESIS", `Review synthesis complete. Generated approval token and staged plan.`);
+
+    // State Machine: RUNNING -> REVIEW_READY -> AWAITING_APPROVAL
+    currentSessionStatus = transitionSessionState(currentSessionStatus, "REVIEW_READY");
+    currentSessionStatus = transitionSessionState(currentSessionStatus, "AWAITING_APPROVAL");
+    this.broadcaster.emitStateChange(params.sessionId, currentSessionStatus);
 
     // 7. ORCHESTRATOR: Halt at Human Approval Checkpoint
     recordTimeline("APPROVAL_REQUESTED", "PAUSED_FOR_APPROVAL", `HALTING EXECUTION: Production database mutation blocked. Human approval checkpoint required.`);
@@ -331,7 +450,7 @@ export class TrueForgeOrchestrator {
     const context: AgentContext = {
       sessionId: params.sessionId,
       targetId: params.targetId,
-      status: "AWAITING_APPROVAL",
+      status: currentSessionStatus,
       userPrompt: params.userPrompt,
       schemaSnapshot,
       plan,
@@ -355,7 +474,7 @@ export class TrueForgeOrchestrator {
       repo: params.repo,
       migrationFilePath: params.migrationFilePath,
       userPrompt: params.userPrompt,
-      status: "AWAITING_APPROVAL",
+      status: currentSessionStatus,
       currentStep: "APPROVAL_REQUESTED",
       schemaSnapshot,
       schemaAnalysis,
@@ -369,8 +488,10 @@ export class TrueForgeOrchestrator {
       approvalPacket,
       timeline,
       activityEvents,
+      evidenceItems,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isReadOnly: false,
     };
 
     await this.sessionStore.saveSession(sessionState);
@@ -384,6 +505,7 @@ export class TrueForgeOrchestrator {
       sandboxOutput,
       reviewReport,
       activityEvents,
+      evidenceItems,
     };
   }
 
@@ -427,10 +549,13 @@ export class TrueForgeOrchestrator {
       status: AgentActivityEvent["status"],
       phase: string,
       message: string,
-      evidence?: Record<string, unknown>
+      evidence?: Record<string, unknown>,
+      durationMs?: number,
+      toolName?: string,
+      evidenceRef?: string
     ) => {
       if (!session.activityEvents) session.activityEvents = [];
-      session.activityEvents.push({
+      const event: AgentActivityEvent = {
         id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         timestamp: new Date().toISOString(),
         sessionId: params.sessionId,
@@ -439,16 +564,53 @@ export class TrueForgeOrchestrator {
         status,
         message,
         evidence,
-      });
+        durationMs,
+        toolName,
+        evidenceRef,
+      };
+      session.activityEvents.push(event);
+      this.broadcaster.emitActivity(params.sessionId, event);
+    };
+
+    const recordEvidence = (
+      source: string,
+      sourceType: EvidenceSourceType,
+      actor: AgentRole,
+      summary: string,
+      rawPayload: unknown,
+      confidence: number = 1.0
+    ): EvidenceItem => {
+      if (!session.evidenceItems) session.evidenceItems = [];
+      const contentHash = this.computeSha256(rawPayload as object);
+      const evidence: EvidenceItem = {
+        evidenceId: `evi_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        sessionId: params.sessionId,
+        source,
+        sourceType,
+        actor,
+        timestamp: new Date().toISOString(),
+        summary,
+        contentHash,
+        rawReference: rawPayload,
+        confidence,
+      };
+      session.evidenceItems.push(evidence);
+      this.broadcaster.emitEvidence(params.sessionId, evidence);
+      return evidence;
     };
 
     // Rejection Flow
     if (params.humanDecision === "REJECTED") {
+      session.status = transitionSessionState(session.status, "REJECTED");
+      this.broadcaster.emitStateChange(params.sessionId, session.status);
+
       recordEvent("APPROVAL_REJECTED", "COMPLETED", `Operator '${params.approvedBy || "operator"}' rejected migration plan '${session.plan?.id}'. Zero mutation applied.`);
       emitActivity("HUMAN", "COMPLETED", "HUMAN_REJECTION", `Human operator rejected migration. Zero mutations applied.`);
-      session.status = "REJECTED";
       session.currentStep = "APPROVAL_REJECTED";
+      session.completedAt = new Date().toISOString();
+      session.isReadOnly = true;
       await this.sessionStore.saveSession(session);
+      this.broadcaster.closeSessionStream(params.sessionId);
       return { sessionState: session };
     }
 
@@ -457,11 +619,15 @@ export class TrueForgeOrchestrator {
       throw new Error("[Approval Error]: Missing required approval token for approved migration.");
     }
 
+    session.status = transitionSessionState(session.status, "APPROVED");
+    this.broadcaster.emitStateChange(params.sessionId, session.status);
+
     recordEvent("APPROVED", "COMPLETED", `Human operator '${params.approvedBy || "operator@schemasentinel.dev"}' granted approval.`);
     emitActivity("HUMAN", "COMPLETED", "HUMAN_APPROVAL", `Human operator approved plan '${session.plan?.id}'. Authorizing controlled staging apply.`);
     
     // Concurrency Lock: Transition & persist to APPLYING
-    session.status = "APPLYING";
+    session.status = transitionSessionState(session.status, "APPLYING");
+    this.broadcaster.emitStateChange(params.sessionId, session.status);
     session.currentStep = "APPLYING";
     await this.sessionStore.saveSession(session);
 
@@ -482,10 +648,14 @@ export class TrueForgeOrchestrator {
       const msg = err instanceof Error ? err.message : String(err);
       recordEvent("APPLY_BLOCKED", "FAILED", `Apply blocked by safety boundary: ${msg}`);
       emitActivity("ORCHESTRATOR", "BLOCKED", "STAGING_APPLY", `Apply blocked: ${msg}`);
-      session.status = "FAILED";
+      session.status = transitionSessionState(session.status, "FAILED");
+      this.broadcaster.emitStateChange(params.sessionId, session.status);
       session.currentStep = "APPLY_BLOCKED";
       session.errorMessage = msg;
+      session.completedAt = new Date().toISOString();
+      session.isReadOnly = true;
       await this.sessionStore.saveSession(session);
+      this.broadcaster.closeSessionStream(params.sessionId);
       throw err;
     }
 
@@ -496,28 +666,45 @@ export class TrueForgeOrchestrator {
     // Verification Step
     if (applyResult.verificationResult) {
       session.verificationResult = applyResult.verificationResult;
+      session.status = transitionSessionState(session.status, "VERIFYING");
+      this.broadcaster.emitStateChange(params.sessionId, session.status);
+
       recordEvent("VERIFICATION_STARTED", "STARTED", "Running deterministic post-apply verification queries...");
       emitActivity("SYSTEM", "RUNNING", "VERIFICATION", `Running ${applyResult.verificationResult.checks.length} live post-apply invariant checks`);
+
+      const verificationEvidence = recordEvidence(
+        `postgres://${session.targetId}/post-apply-verification`,
+        "VERIFICATION_QUERY",
+        "SYSTEM",
+        `Post-apply verification: ${applyResult.verificationResult.status.toUpperCase()} (${applyResult.verificationResult.checks.length} invariant checks)`,
+        applyResult.verificationResult
+      );
+      applyResult.verificationResult.evidenceId = verificationEvidence.evidenceId;
+      applyResult.verificationResult.contentHash = verificationEvidence.contentHash;
 
       if (applyResult.verificationResult.status === "passed") {
         recordEvent("VERIFICATION_COMPLETED", "COMPLETED", `All ${applyResult.verificationResult.checks.length} post-apply checks PASSED.`);
         recordEvent("SESSION_COMPLETED", "COMPLETED", `Session '${session.sessionId}' successfully completed.`);
-        emitActivity("SYSTEM", "COMPLETED", "VERIFICATION", `All post-apply verification checks PASSED`);
+        emitActivity("SYSTEM", "COMPLETED", "VERIFICATION", `All post-apply verification checks PASSED`, undefined, undefined, undefined, verificationEvidence.evidenceId);
         emitActivity("ORCHESTRATOR", "COMPLETED", "COMPLETE", `Session '${session.sessionId}' completed successfully with full verification`);
-        session.status = "COMPLETED";
+        session.status = transitionSessionState(session.status, "COMPLETED");
         session.currentStep = "SESSION_COMPLETED";
       } else {
         recordEvent("VERIFICATION_FAILED", "FAILED", `Post-apply verification failed: ${applyResult.verificationResult.failures.join("; ")}`);
-        emitActivity("SYSTEM", "FAILED", "VERIFICATION", `Post-apply verification failed with ${applyResult.verificationResult.failures.length} errors`);
-        session.status = "FAILED";
+        emitActivity("SYSTEM", "FAILED", "VERIFICATION", `Post-apply verification failed with ${applyResult.verificationResult.failures.length} errors`, undefined, undefined, undefined, verificationEvidence.evidenceId);
+        session.status = transitionSessionState(session.status, "VERIFICATION_FAILED");
         session.currentStep = "VERIFICATION_FAILED";
         session.errorMessage = "Post-apply verification failed.";
       }
     } else {
-      session.status = applyResult.success ? "COMPLETED" : "FAILED";
+      session.status = transitionSessionState(session.status, applyResult.success ? "COMPLETED" : "FAILED");
     }
 
+    session.completedAt = new Date().toISOString();
+    session.isReadOnly = true;
+    this.broadcaster.emitStateChange(params.sessionId, session.status);
     await this.sessionStore.saveSession(session);
+    this.broadcaster.closeSessionStream(params.sessionId);
 
     return {
       sessionState: session,

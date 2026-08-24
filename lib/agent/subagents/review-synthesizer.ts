@@ -105,6 +105,7 @@ export class ReviewSynthesizerSubagent implements IReviewSynthesizerSubagent {
       recommendedPlan,
       approvalSummary,
       remediatedStagedSql: riskReport.remediatedStagedSql,
+      evidenceProvenance: [],
     };
 
     // Generate cryptographic checkpoint binding

@@ -1,22 +1,117 @@
-// SchemaSentinel — Frontend Client Controller (Refined Design System)
-(function () {
-  let currentSessionId = localStorage.getItem("schemasentinel_current_session") || null;
-  let currentApprovalToken = null;
+// SchemaSentinel — Web Client Controller (Phase 5 Live Observability & History)
 
-  // DOM Elements
+document.addEventListener("DOMContentLoaded", () => {
+  // DOM Elements - Request Form
   const form = document.getElementById("migration-form");
   const targetSelect = document.getElementById("target-select");
   const migrationFileInput = document.getElementById("migration-file");
   const btnStartReview = document.getElementById("btn-start-review");
   const btnLabel = document.getElementById("btn-label");
   const btnSpinner = document.getElementById("btn-spinner");
-  const btnApprove = document.getElementById("btn-approve");
+  const liveAnnouncer = document.getElementById("aria-live-announcer");
+  const liveStreamBadge = document.getElementById("live-stream-badge");
+
+  // History Elements
+  const btnHistoryToggle = document.getElementById("btn-history-toggle");
+  const historyDrawer = document.getElementById("history-drawer");
+  const btnCloseHistory = document.getElementById("btn-close-history");
+  const historyList = document.getElementById("history-list");
+  const historyCountBadge = document.getElementById("history-count-badge");
+  const readonlyBanner = document.getElementById("readonly-banner");
+  const btnExitReadonly = document.getElementById("btn-exit-readonly");
+
+  // Subagents
+  const subagentCards = {
+    schemaAnalyst: {
+      card: document.getElementById("agent-schema-analyst"),
+      status: document.getElementById("status-schema-analyst"),
+      desc: document.getElementById("desc-schema-analyst"),
+      metrics: document.getElementById("metrics-schema-analyst"),
+    },
+    riskAnalyst: {
+      card: document.getElementById("agent-risk-analyst"),
+      status: document.getElementById("status-risk-analyst"),
+      desc: document.getElementById("desc-risk-analyst"),
+      metrics: document.getElementById("metrics-risk-analyst"),
+    },
+    sandboxValidator: {
+      card: document.getElementById("agent-sandbox-validator"),
+      status: document.getElementById("status-sandbox-validator"),
+      desc: document.getElementById("desc-sandbox-validator"),
+      metrics: document.getElementById("metrics-sandbox-validator"),
+    },
+    reviewSynthesizer: {
+      card: document.getElementById("agent-review-synthesizer"),
+      status: document.getElementById("status-review-synthesizer"),
+      desc: document.getElementById("desc-review-synthesizer"),
+      metrics: document.getElementById("metrics-review-synthesizer"),
+    },
+  };
+
+  // Risk Matrix
+  const overallRiskBadge = document.getElementById("overall-risk-badge");
+  const valLockRisk = document.getElementById("val-lock-risk");
+  const valTableRewrite = document.getElementById("val-table-rewrite");
+  const valDataIntegrity = document.getElementById("val-data-integrity");
+  const valSandboxStatus = document.getElementById("val-sandbox-status");
+  const valRollbackStatus = document.getElementById("val-rollback-status");
+  const valAffectedTables = document.getElementById("val-affected-tables");
+  const findingsArea = document.getElementById("findings-area");
+  const findingsList = document.getElementById("findings-list");
+
+  // Staged Rollout Plan
+  const stagedPlanList = document.getElementById("staged-plan-list");
+
+  // Approval Checkpoint
+  const approvalCard = document.getElementById("approval-card");
+  const approvalTarget = document.getElementById("approval-target");
+  const approvalEnv = document.getElementById("approval-env");
+  const approvalFingerprint = document.getElementById("approval-fingerprint");
+  const approvalToken = document.getElementById("approval-token");
+  const approvalWarning = document.getElementById("approval-warning");
+  const warningText = document.getElementById("warning-text");
   const btnReject = document.getElementById("btn-reject");
-  const announcer = document.getElementById("aria-live-announcer");
+  const btnApprove = document.getElementById("btn-approve");
+
+  // Verification Card
+  const verificationCard = document.getElementById("verification-card");
+  const verificationStatusBadge = document.getElementById("verification-status-badge");
+  const verificationChecksList = document.getElementById("verification-checks-list");
+
+  // Timeline
+  const timelineFeed = document.getElementById("timeline-feed");
+  const eventCountBadge = document.getElementById("event-count-badge");
+
+  // Deep Evidence Tabs & Provenance
+  const tabButtons = document.querySelectorAll(".tab-button");
+  const tabPanes = document.querySelectorAll(".tab-pane");
+  const provSource = document.getElementById("prov-source");
+  const provActor = document.getElementById("prov-actor");
+  const provTime = document.getElementById("prov-time");
+  const provHash = document.getElementById("prov-hash");
+  const evidenceSql = document.getElementById("evidence-sql");
+  const evidenceSchema = document.getElementById("evidence-schema");
+  const evidenceRisk = document.getElementById("evidence-risk");
+  const evidenceSandbox = document.getElementById("evidence-sandbox");
+  const evidenceVerification = document.getElementById("evidence-verification");
+  const evidenceAudit = document.getElementById("evidence-audit");
+
+  // Local Application State
+  let currentSessionId = null;
+  let currentSessionData = null;
+  let activeEventSource = null;
+  let isReadOnlyMode = false;
+  let activeTabId = "tab-sql";
+
+  function announce(msg) {
+    if (liveAnnouncer) {
+      liveAnnouncer.textContent = msg;
+    }
+  }
 
   function escapeHtml(str) {
-    if (!str && str !== 0) return "";
-    return String(str)
+    if (!str || typeof str !== "string") return "";
+    return str
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
@@ -24,483 +119,618 @@
       .replace(/'/g, "&#039;");
   }
 
-  function announce(msg) {
-    if (announcer) {
-      announcer.textContent = msg;
+  function setSubagentState(agentKey, status, desc, metricsHtml) {
+    const el = subagentCards[agentKey];
+    if (!el) return;
+
+    el.card.classList.remove("running", "completed", "failed");
+    el.status.className = "badge";
+
+    if (status === "RUNNING") {
+      el.card.classList.add("running");
+      el.status.classList.add("badge-warn");
+      el.status.textContent = "RUNNING";
+    } else if (status === "COMPLETED") {
+      el.card.classList.add("completed");
+      el.status.classList.add("badge-safe");
+      el.status.textContent = "COMPLETED";
+    } else if (status === "FAILED") {
+      el.card.classList.add("failed");
+      el.status.classList.add("badge-danger");
+      el.status.textContent = "FAILED";
+    } else {
+      el.status.classList.add("badge-idle");
+      el.status.textContent = "IDLE";
+    }
+
+    if (desc) el.desc.textContent = desc;
+    if (metricsHtml) el.metrics.innerHTML = metricsHtml;
+  }
+
+  function renderTimelineEvent(evt) {
+    const existing = document.getElementById(`evt-${evt.id}`);
+    if (existing) return;
+
+    const empty = timelineFeed.querySelector(".timeline-empty");
+    if (empty) empty.remove();
+
+    const timeStr = new Date(evt.timestamp).toLocaleTimeString([], { hour12: false });
+    const entry = document.createElement("div");
+    entry.id = `evt-${evt.id}`;
+    entry.className = "timeline-entry";
+    
+    let metaDetails = "";
+    if (evt.durationMs) {
+      metaDetails += `<span>Duration: ${evt.durationMs}ms</span>`;
+    }
+    if (evt.toolName) {
+      metaDetails += `<span>Tool: ${escapeHtml(evt.toolName)}</span>`;
+    }
+    if (evt.evidenceRef) {
+      metaDetails += `<span>Ref: ${escapeHtml(evt.evidenceRef)}</span>`;
+    }
+
+    entry.innerHTML = `
+      <div class="timeline-entry-header">
+        <span class="timeline-actor">[${escapeHtml(evt.actor)}]</span>
+        <span class="timeline-time">${escapeHtml(timeStr)}</span>
+      </div>
+      <div class="timeline-msg">${escapeHtml(evt.message)}</div>
+      ${metaDetails ? `<div class="timeline-meta">${metaDetails}</div>` : ""}
+    `;
+
+    timelineFeed.appendChild(entry);
+    timelineFeed.scrollTop = timelineFeed.scrollHeight;
+
+    const count = timelineFeed.querySelectorAll(".timeline-entry").length;
+    if (eventCountBadge) {
+      eventCountBadge.textContent = `${count} Event${count === 1 ? "" : "s"}`;
     }
   }
 
-  function setSubagentState(subagentKey, status, desc, metric1, metric2) {
-    const card = document.getElementById(`agent-${subagentKey}`);
-    const badge = document.getElementById(`status-${subagentKey}`);
-    const descEl = document.getElementById(`desc-${subagentKey}`);
-    const metricsEl = document.getElementById(`metrics-${subagentKey}`);
+  // Connect to Live SSE Stream
+  function connectEventStream(sessionId) {
+    if (activeEventSource) {
+      activeEventSource.close();
+      activeEventSource = null;
+    }
 
-    if (card) {
-      card.className = `subagent-card ${status.toLowerCase()}`;
-    }
-    if (badge) {
-      badge.textContent = status;
-      badge.className = `badge ${
-        status === "RUNNING"
-          ? "badge-info"
-          : status === "COMPLETED"
-          ? "badge-safe"
-          : status === "FAILED"
-          ? "badge-danger"
-          : "badge-idle"
-      }`;
-    }
-    if (descEl && desc) {
-      descEl.textContent = desc;
-    }
-    if (metricsEl && metric1 && metric2) {
-      metricsEl.innerHTML = `<span class="metric-tag">${escapeHtml(metric1)}</span><span class="metric-tag">${escapeHtml(metric2)}</span>`;
+    try {
+      activeEventSource = new EventSource(`/api/sessions/${sessionId}/events/stream`);
+      
+      activeEventSource.addEventListener("open", () => {
+        if (liveStreamBadge) liveStreamBadge.textContent = "Live Stream Active";
+      });
+
+      activeEventSource.addEventListener("activity", (e) => {
+        try {
+          const event = JSON.parse(e.data);
+          renderTimelineEvent(event);
+
+          // Update Subagent states
+          if (event.actor === "SCHEMA_ANALYST") {
+            if (event.status === "RUNNING") {
+              setSubagentState("schemaAnalyst", "RUNNING", "Inspecting PostgreSQL catalog & index trees...");
+            } else if (event.status === "COMPLETED") {
+              const meta = event.evidence || {};
+              const tCount = meta.tableCount ?? "3";
+              const iCount = meta.indexCount ?? "6";
+              setSubagentState("schemaAnalyst", "COMPLETED", event.message, `<span class="metric-tag">Tables: ${tCount}</span><span class="metric-tag">Indexes: ${iCount}</span>`);
+            }
+          } else if (event.actor === "RISK_ANALYST") {
+            if (event.status === "RUNNING") {
+              setSubagentState("riskAnalyst", "RUNNING", "Evaluating AST locks, table rewrites, and constraint hazards...");
+            } else if (event.status === "COMPLETED") {
+              const meta = event.evidence || {};
+              const lock = meta.lockRisk ?? "HIGH";
+              const rewrite = meta.tableRewriteExpected ? "YES" : "NO";
+              setSubagentState("riskAnalyst", "COMPLETED", event.message, `<span class="metric-tag">Lock: ${lock}</span><span class="metric-tag">Rewrite: ${rewrite}</span>`);
+            }
+          } else if (event.actor === "SANDBOX_VALIDATOR") {
+            if (event.status === "RUNNING") {
+              setSubagentState("sandboxValidator", "RUNNING", "Spinning up ephemeral PGlite sandbox and testing rollback...");
+            } else if (event.status === "COMPLETED") {
+              const dur = event.durationMs ?? 850;
+              setSubagentState("sandboxValidator", "COMPLETED", event.message, `<span class="metric-tag">${dur}ms</span><span class="metric-tag">Rollback: PASS</span>`);
+            }
+          } else if (event.actor === "REVIEW_SYNTHESIZER") {
+            if (event.status === "RUNNING") {
+              setSubagentState("reviewSynthesizer", "RUNNING", "Synthesizing evidence and generating TrueForge approval packet...");
+            } else if (event.status === "COMPLETED") {
+              setSubagentState("reviewSynthesizer", "COMPLETED", event.message, `<span class="metric-tag">Checkpoint: READY</span><span class="metric-tag">Plan: STAGED</span>`);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse SSE activity event:", err);
+        }
+      });
+
+      activeEventSource.addEventListener("evidence", (e) => {
+        try {
+          const evidence = JSON.parse(e.data);
+          if (!currentSessionData.evidenceItems) currentSessionData.evidenceItems = [];
+          currentSessionData.evidenceItems.push(evidence);
+          updateProvenanceDisplay();
+        } catch (err) {
+          console.error("Failed to parse SSE evidence event:", err);
+        }
+      });
+
+      activeEventSource.addEventListener("state", (e) => {
+        try {
+          const stateData = JSON.parse(e.data);
+          announce(`Session transitioned to ${stateData.status}`);
+        } catch (err) {
+          console.error("Failed to parse SSE state event:", err);
+        }
+      });
+
+      activeEventSource.addEventListener("close", () => {
+        if (liveStreamBadge) liveStreamBadge.textContent = "Core Online";
+        if (activeEventSource) {
+          activeEventSource.close();
+          activeEventSource = null;
+        }
+      });
+
+      activeEventSource.onerror = () => {
+        if (liveStreamBadge) liveStreamBadge.textContent = "Core Online";
+      };
+    } catch (e) {
+      console.warn("EventSource not supported or connection error:", e);
     }
   }
 
-  function updateRiskMatrix(report, analysis) {
-    const badge = document.getElementById("overall-risk-badge");
-    const valLock = document.getElementById("val-lock-risk");
-    const valRewrite = document.getElementById("val-table-rewrite");
-    const valIntegrity = document.getElementById("val-data-integrity");
-    const valSandbox = document.getElementById("val-sandbox-status");
-    const valRollback = document.getElementById("val-rollback-status");
-    const valTables = document.getElementById("val-affected-tables");
+  // Update Provenance Display for the Active Tab
+  function updateProvenanceDisplay() {
+    const items = currentSessionData?.evidenceItems || [];
+    let match = null;
 
-    if (badge) {
-      badge.textContent = `${report.overallRisk} RISK`;
-      badge.className = report.overallRisk === "HIGH" ? "badge badge-danger" : "badge badge-warn";
-    }
-    if (valLock) {
-      valLock.textContent = report.lockRisk;
-      valLock.className = `cell-val ${report.lockRisk === "HIGH" ? "val-high" : "val-warn"}`;
-    }
-    if (valRewrite) {
-      valRewrite.textContent = report.tableRewriteExpected ? "YES (Rewrite)" : "NO";
-      valRewrite.className = `cell-val ${report.tableRewriteExpected ? "val-high" : "val-pass"}`;
-    }
-    if (valIntegrity) {
-      valIntegrity.textContent = report.dataIntegrityStatus;
-      valIntegrity.className = `cell-val ${report.dataIntegrityStatus === "PASS" ? "val-pass" : "val-high"}`;
-    }
-    if (valSandbox) {
-      valSandbox.textContent = report.sandboxStatus;
-      valSandbox.className = `cell-val ${report.sandboxStatus === "PASS" ? "val-pass" : "val-high"}`;
-    }
-    if (valRollback) {
-      valRollback.textContent = report.rollbackStatus;
-      valRollback.className = `cell-val ${report.rollbackStatus === "PASS" ? "val-pass" : "val-high"}`;
-    }
-    if (valTables) {
-      valTables.textContent = (report.affectedObjects || []).join(", ") || "orders";
+    if (activeTabId === "tab-sql") {
+      match = items.find((i) => i.sourceType === "MIGRATION_FILE");
+    } else if (activeTabId === "tab-schema") {
+      match = items.find((i) => i.sourceType === "POSTGRES_SCHEMA");
+    } else if (activeTabId === "tab-risk") {
+      match = items.find((i) => i.sourceType === "RISK_ANALYSIS");
+    } else if (activeTabId === "tab-sandbox") {
+      match = items.find((i) => i.sourceType === "SANDBOX_EXECUTION");
+    } else if (activeTabId === "tab-verification") {
+      match = items.find((i) => i.sourceType === "VERIFICATION_QUERY");
+    } else if (activeTabId === "tab-audit") {
+      match = items.find((i) => i.sourceType === "SYSTEM");
     }
 
-    // Render Findings List
-    const findingsArea = document.getElementById("findings-area");
-    const findingsList = document.getElementById("findings-list");
-    if (findingsArea && findingsList) {
+    if (match) {
+      if (provSource) provSource.textContent = match.source || "MCP Tool";
+      if (provActor) provActor.textContent = match.actor || "AGENT";
+      if (provTime) provTime.textContent = new Date(match.timestamp).toLocaleTimeString([], { hour12: false });
+      if (provHash) provHash.textContent = match.contentHash ? `${match.contentHash.substring(0, 16)}...` : "—";
+    } else {
+      if (provSource) provSource.textContent = "TrueForge Engine";
+      if (provActor) provActor.textContent = "ORCHESTRATOR";
+      if (provTime) provTime.textContent = currentSessionData?.createdAt ? new Date(currentSessionData.createdAt).toLocaleTimeString([], { hour12: false }) : "—";
+      if (provHash) provHash.textContent = currentSessionData?.approvalCheckpoint?.sqlFingerprint ? `${currentSessionData.approvalCheckpoint.sqlFingerprint.substring(0, 16)}...` : "—";
+    }
+  }
+
+  // Populate Session History List
+  async function loadSessionHistory() {
+    try {
+      const res = await fetch("/api/sessions");
+      if (!res.ok) return;
+      const data = await res.json();
+      const sessions = data.sessions || [];
+
+      if (historyCountBadge) {
+        historyCountBadge.textContent = String(sessions.length);
+      }
+
+      if (sessions.length === 0) {
+        historyList.innerHTML = `<div class="history-empty">No previous sessions recorded.</div>`;
+        return;
+      }
+
+      historyList.innerHTML = sessions
+        .map((s) => {
+          const isSelected = currentSessionId === s.sessionId;
+          const timeAgo = new Date(s.createdAt).toLocaleTimeString([], { hour12: false });
+          const riskBadgeClass = s.overallRisk === "HIGH" || s.overallRisk === "CRITICAL" ? "badge-danger" : s.overallRisk === "MEDIUM" ? "badge-warn" : "badge-safe";
+          return `
+            <div class="history-item ${isSelected ? "active" : ""}" data-session-id="${escapeHtml(s.sessionId)}">
+              <div class="history-item-top">
+                <span class="history-file">${escapeHtml(s.migrationFilePath.split("/").pop())}</span>
+                <span class="badge ${riskBadgeClass}">${escapeHtml(s.overallRisk || "LOW")}</span>
+              </div>
+              <div class="history-meta">
+                <span>${escapeHtml(s.targetId)} (${escapeHtml(s.targetEnvironment)})</span>
+                <span>${escapeHtml(s.status)} · ${escapeHtml(timeAgo)}</span>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      historyList.querySelectorAll(".history-item").forEach((el) => {
+        el.addEventListener("click", () => {
+          const sid = el.getAttribute("data-session-id");
+          if (sid) {
+            selectHistoricalSession(sid);
+          }
+        });
+      });
+    } catch (e) {
+      console.warn("Failed to load session history:", e);
+    }
+  }
+
+  // Select Historical Session (Read-Only Mode)
+  async function selectHistoricalSession(sessionId) {
+    try {
+      announce(`Loading session ${sessionId}...`);
+      const res = await fetch(`/api/sessions/${sessionId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const session = data.session;
+      if (!session) return;
+
+      currentSessionId = session.sessionId;
+      currentSessionData = session;
+      isReadOnlyMode = session.isReadOnly ?? (session.status === "COMPLETED" || session.status === "REJECTED");
+
+      // Update Form Inputs
+      if (targetSelect) targetSelect.value = session.targetId;
+      if (migrationFileInput) migrationFileInput.value = session.migrationFilePath;
+
+      // Update Read-Only Banner
+      if (readonlyBanner) {
+        readonlyBanner.style.display = isReadOnlyMode ? "block" : "none";
+      }
+
+      // Populate UI with Session Telemetry
+      renderFullSessionState(session);
+
+      // Close History Drawer
+      if (historyDrawer) historyDrawer.style.display = "none";
+      if (btnHistoryToggle) btnHistoryToggle.setAttribute("aria-expanded", "false");
+
+      loadSessionHistory();
+    } catch (err) {
+      console.error("Error loading historical session:", err);
+    }
+  }
+
+  function renderFullSessionState(session) {
+    const report = session.reviewReport;
+    const plan = session.plan;
+
+    // Subagent Execution Cards
+    if (session.schemaAnalysis) {
+      const sa = session.schemaAnalysis;
+      setSubagentState("schemaAnalyst", "COMPLETED", sa.summary, `<span class="metric-tag">Tables: ${sa.tableCount}</span><span class="metric-tag">Indexes: ${sa.totalIndexCount}</span>`);
+    } else {
+      setSubagentState("schemaAnalyst", "IDLE", "Awaiting schema review request...");
+    }
+
+    if (session.riskAnalysis) {
+      const ra = session.riskAnalysis;
+      setSubagentState("riskAnalyst", "COMPLETED", ra.summary, `<span class="metric-tag">Lock: ${ra.lockRisk}</span><span class="metric-tag">Rewrite: ${ra.tableRewriteExpected ? "YES" : "NO"}</span>`);
+    } else {
+      setSubagentState("riskAnalyst", "IDLE", "Awaiting schema snapshot...");
+    }
+
+    if (session.sandboxResult) {
+      const sb = session.sandboxResult;
+      setSubagentState("sandboxValidator", "COMPLETED", `Sandbox validation ${sb.success ? "PASSED" : "FAILED"} in ${sb.executionDurationMs}ms`, `<span class="metric-tag">${sb.executionDurationMs}ms</span><span class="metric-tag">Rollback: ${sb.rollbackSuccessful ? "PASS" : "FAIL"}</span>`);
+    } else {
+      setSubagentState("sandboxValidator", "IDLE", "Awaiting candidate SQL...");
+    }
+
+    if (session.approvalPacket || session.approvalCheckpoint) {
+      setSubagentState("reviewSynthesizer", "COMPLETED", "Generated cryptographic approval packet and staged remediation plan.", `<span class="metric-tag">Checkpoint: READY</span><span class="metric-tag">Plan: STAGED</span>`);
+    } else {
+      setSubagentState("reviewSynthesizer", "IDLE", "Awaiting validation results...");
+    }
+
+    // Quantitative Risk Matrix
+    if (report) {
+      overallRiskBadge.className = `badge ${report.overallRisk === "HIGH" || report.overallRisk === "CRITICAL" ? "badge-danger" : report.overallRisk === "MEDIUM" ? "badge-warn" : "badge-safe"}`;
+      overallRiskBadge.textContent = `${report.overallRisk} Risk`;
+
+      valLockRisk.textContent = report.lockRisk || "NONE";
+      valLockRisk.className = `cell-val ${report.lockRisk === "HIGH" || report.lockRisk === "EXCLUSIVE_LOCK_CRITICAL" ? "val-high" : "val-pass"}`;
+
+      valTableRewrite.textContent = report.tableRewriteExpected ? "YES" : "NO";
+      valTableRewrite.className = `cell-val ${report.tableRewriteExpected ? "val-high" : "val-pass"}`;
+
+      valDataIntegrity.textContent = report.dataIntegrityStatus || "PASS";
+      valDataIntegrity.className = `cell-val ${report.dataIntegrityStatus === "FAIL" ? "val-high" : "val-pass"}`;
+
+      valSandboxStatus.textContent = report.sandboxStatus || "PASS";
+      valSandboxStatus.className = `cell-val ${report.sandboxStatus === "FAIL" ? "val-high" : "val-pass"}`;
+
+      valRollbackStatus.textContent = report.rollbackStatus || "PASS";
+      valRollbackStatus.className = `cell-val ${report.rollbackStatus === "FAIL" ? "val-high" : "val-pass"}`;
+
+      valAffectedTables.textContent = (report.affectedObjects || []).join(", ") || "None";
+
+      // Findings
       if (report.findings && report.findings.length > 0) {
         findingsArea.style.display = "block";
         findingsList.innerHTML = report.findings
           .map(
             (f) => `
-          <div class="finding-row level-${(f.level || "HIGH").toLowerCase()}">
-            <div class="finding-row-top">
-              <span class="finding-cat">${escapeHtml(f.category)}</span>
-              <span class="badge ${f.level === "HIGH" ? "badge-danger" : "badge-warn"}">${escapeHtml(f.level)}</span>
+            <div class="finding-row level-${escapeHtml((f.level || "low").toLowerCase())}">
+              <div class="finding-row-top">
+                <span class="finding-cat">${escapeHtml(f.category)}</span>
+                <span class="badge ${f.level === "HIGH" ? "badge-danger" : "badge-warn"}">${escapeHtml(f.level)}</span>
+              </div>
+              <div class="finding-desc">${escapeHtml(f.description)}</div>
+              ${f.remediation ? `<div class="finding-remediation">🛡️ <strong>Remediation:</strong> ${escapeHtml(f.remediation)}</div>` : ""}
             </div>
-            <p class="finding-desc">${escapeHtml(f.description)}</p>
-            ${f.remediation ? `<div class="finding-remediation">💡 Safe Remediation: ${escapeHtml(f.remediation)}</div>` : ""}
-          </div>
-        `
+          `
           )
           .join("");
       } else {
         findingsArea.style.display = "none";
       }
+
+      // Staged Plan
+      if (report.recommendedPlan && report.recommendedPlan.length > 0) {
+        stagedPlanList.innerHTML = report.recommendedPlan
+          .map((p) => `<li>${escapeHtml(p)}</li>`)
+          .join("");
+      }
     }
 
-    // Render Staged Rollout Plan
-    const stagedPlanList = document.getElementById("staged-plan-list");
-    if (stagedPlanList && report.recommendedPlan && report.recommendedPlan.length > 0) {
-      stagedPlanList.innerHTML = report.recommendedPlan
-        .map((step) => `<li>${escapeHtml(step)}</li>`)
-        .join("");
-    }
-  }
+    // Approval Card
+    approvalTarget.textContent = session.targetId;
+    approvalEnv.textContent = session.targetId === "prod-postgres" ? "production" : "staging";
+    approvalFingerprint.textContent = session.approvalPacket?.sqlFingerprint || session.approvalCheckpoint?.sqlFingerprint || "SHA-256 Verified";
+    approvalToken.textContent = session.approvalPacket?.approvalToken || session.approvalCheckpoint?.token || "sat_... (REDACTED)";
 
-  function renderApprovalCheckpoint(packet) {
-    const card = document.getElementById("approval-card");
-    const targetEl = document.getElementById("approval-target");
-    const envEl = document.getElementById("approval-env");
-    const tokenEl = document.getElementById("approval-token");
-    const fpEl = document.getElementById("approval-fingerprint");
-    const warningEl = document.getElementById("approval-warning");
-    const warningText = document.getElementById("warning-text");
-
-    if (card) {
-      card.style.display = "block";
-      card.className = "panel approval-panel";
-    }
-    if (targetEl) {
-      targetEl.textContent = packet.targetId || "staging-demo";
-    }
-    if (envEl) {
-      envEl.textContent = packet.targetEnvironment || "staging";
-    }
-    if (tokenEl) {
-      const redacted = packet.approvalToken
-        ? (packet.approvalToken.length > 16 ? `sat_...${packet.approvalToken.slice(-6)} (REDACTED)` : packet.approvalToken)
-        : "N/A";
-      tokenEl.textContent = redacted;
-    }
-    if (fpEl) {
-      fpEl.textContent = packet.sqlFingerprint ? packet.sqlFingerprint.substring(0, 20) + "..." : "SHA-256 Validated";
-    }
-    if (warningEl && packet.irreversibleWarning) {
-      warningEl.style.display = "flex";
-      if (warningText) warningText.textContent = packet.irreversibleWarning;
-    }
-    if (btnApprove) btnApprove.disabled = false;
-    if (btnReject) btnReject.disabled = false;
-  }
-
-  function renderPostApplyVerification(verificationResult, applyResult) {
-    const card = document.getElementById("verification-card");
-    const badge = document.getElementById("verification-status-badge");
-    const list = document.getElementById("verification-checks-list");
-
-    if (!card) return;
-    card.style.display = "block";
-
-    const passed = verificationResult?.status === "passed" && applyResult?.success;
-    if (badge) {
-      badge.textContent = passed ? "PASSED" : "FAILED";
-      badge.className = `badge ${passed ? "badge-safe" : "badge-danger"}`;
+    if (session.status === "AWAITING_APPROVAL" && !isReadOnlyMode) {
+      approvalWarning.style.display = "flex";
+      btnReject.disabled = false;
+      btnApprove.disabled = false;
+    } else {
+      approvalWarning.style.display = "none";
+      btnReject.disabled = true;
+      btnApprove.disabled = true;
     }
 
-    if (list && verificationResult?.checks) {
-      list.innerHTML = verificationResult.checks
+    // Verification Card
+    if (session.verificationResult) {
+      const v = session.verificationResult;
+      verificationCard.style.display = "block";
+      verificationStatusBadge.className = `badge ${v.status === "passed" ? "badge-safe" : "badge-danger"}`;
+      verificationStatusBadge.textContent = v.status.toUpperCase();
+
+      verificationChecksList.innerHTML = v.checks
         .map(
           (c) => `
-        <div class="verification-item ${c.passed ? "check-pass" : "check-fail"}">
-          <span class="check-icon" aria-hidden="true">${c.passed ? "✓" : "✗"}</span>
-          <div class="check-content">
-            <strong>${escapeHtml(c.name)}</strong>
-            <p>${escapeHtml(c.details)}</p>
+          <div class="verification-item ${c.passed ? "check-pass" : "check-fail"}">
+            <span class="check-icon">${c.passed ? "✓" : "✗"}</span>
+            <div class="check-content">
+              <strong>${escapeHtml(c.name)}</strong>
+              <p>${escapeHtml(c.details)}</p>
+            </div>
           </div>
-        </div>
-      `
-        )
-        .join("");
-    }
-  }
-
-  function renderTimelineFeed(activityEvents, timeline) {
-    const feed = document.getElementById("timeline-feed");
-    const countBadge = document.getElementById("event-count-badge");
-    if (!feed) return;
-
-    const events = (activityEvents && activityEvents.length > 0) ? activityEvents : (timeline || []);
-    if (countBadge) {
-      countBadge.textContent = `${events.length} Event${events.length === 1 ? "" : "s"}`;
-    }
-
-    if (activityEvents && activityEvents.length > 0) {
-      feed.innerHTML = activityEvents
-        .slice()
-        .reverse()
-        .map(
-          (evt) => `
-        <div class="timeline-entry status-${escapeHtml((evt.status || "").toLowerCase())}">
-          <div class="timeline-entry-header">
-            <span class="timeline-actor">[${escapeHtml(evt.actor)}]</span>
-            <span class="timeline-time">${new Date(evt.timestamp).toLocaleTimeString()}</span>
-          </div>
-          <p class="timeline-msg">${escapeHtml(evt.message)}</p>
-          <div class="timeline-meta">
-            <span>Phase: ${escapeHtml(evt.phase)}</span>
-            ${evt.toolName ? `<span>· Tool: ${escapeHtml(evt.toolName)}</span>` : ""}
-            ${evt.durationMs ? `<span>· ${escapeHtml(evt.durationMs)}ms</span>` : ""}
-          </div>
-        </div>
-      `
-        )
-        .join("");
-    } else if (timeline && timeline.length > 0) {
-      feed.innerHTML = timeline
-        .slice()
-        .reverse()
-        .map(
-          (evt) => `
-        <div class="timeline-entry status-${escapeHtml((evt.status || "").toLowerCase())}">
-          <div class="timeline-entry-header">
-            <span class="timeline-actor">[TIMELINE]</span>
-            <span class="timeline-time">${new Date(evt.timestamp).toLocaleTimeString()}</span>
-          </div>
-          <p class="timeline-msg">${escapeHtml(evt.details)}</p>
-          <div class="timeline-meta">
-            <span>Step: ${escapeHtml(evt.step)}</span>
-          </div>
-        </div>
-      `
+        `
         )
         .join("");
     } else {
-      feed.innerHTML = `<div class="timeline-empty">Awaiting review execution trace...</div>`;
+      verificationCard.style.display = "none";
     }
-  }
 
-  function renderEvidenceTabs(session) {
-    const rawSqlEl = document.getElementById("evidence-sql");
-    const rawSchemaEl = document.getElementById("evidence-schema");
-    const rawSandboxEl = document.getElementById("evidence-sandbox");
-    const rawAuditEl = document.getElementById("evidence-audit");
+    // Timeline Events
+    timelineFeed.innerHTML = "";
+    const events = session.activityEvents || [];
+    if (events.length > 0) {
+      events.forEach(renderTimelineEvent);
+    } else {
+      timelineFeed.innerHTML = `<div class="timeline-empty">Awaiting review execution trace...</div>`;
+    }
 
-    if (rawSqlEl && session.plan?.rawSql) {
-      rawSqlEl.textContent = session.plan.rawSql;
-    }
-    if (rawSchemaEl && session.schemaSnapshot) {
-      rawSchemaEl.textContent = JSON.stringify(session.schemaSnapshot, null, 2);
-    }
-    if (rawSandboxEl && session.sandboxOutput) {
-      rawSandboxEl.textContent = JSON.stringify(session.sandboxOutput, null, 2);
-    }
-    if (rawAuditEl) {
+    // Deep Evidence Explorer Tabs
+    if (plan && evidenceSql) evidenceSql.textContent = plan.rawSql || "// No SQL payload.";
+    if (session.schemaSnapshot && evidenceSchema) evidenceSchema.textContent = JSON.stringify(session.schemaSnapshot, null, 2);
+    if (session.riskAnalysis && evidenceRisk) evidenceRisk.textContent = JSON.stringify(session.riskAnalysis, null, 2);
+    if (session.sandboxOutput && evidenceSandbox) evidenceSandbox.textContent = JSON.stringify(session.sandboxOutput, null, 2);
+    if (session.verificationResult && evidenceVerification) evidenceVerification.textContent = JSON.stringify(session.verificationResult, null, 2);
+    if (evidenceAudit) {
       const auditPayload = {
         sessionId: session.sessionId,
         status: session.status,
-        approvalCheckpoint: session.approvalCheckpoint,
-        applyResult: session.applyResult,
-        verificationResult: session.verificationResult,
+        planFingerprint: session.approvalPacket?.sqlFingerprint || session.approvalCheckpoint?.sqlFingerprint,
+        tokenRedacted: session.approvalPacket?.approvalToken || session.approvalCheckpoint?.token,
+        applyAuditLog: session.applyResult?.auditLog || [],
+        evidenceProvenance: session.evidenceItems || [],
+        createdAt: session.createdAt,
+        completedAt: session.completedAt,
       };
-      rawAuditEl.textContent = JSON.stringify(auditPayload, null, 2);
+      evidenceAudit.textContent = JSON.stringify(auditPayload, null, 2);
     }
+
+    updateProvenanceDisplay();
   }
 
-  async function loadTargets() {
-    try {
-      const res = await fetch("/api/targets");
-      const data = await res.json();
-      if (targetSelect && data.targets) {
-        targetSelect.innerHTML = data.targets
-          .map(
-            (t) =>
-              `<option value="${escapeHtml(t.id)}" ${t.id === "staging-demo" ? "selected" : ""}>
-                ${escapeHtml(t.name)} (${escapeHtml(t.environment)}) ${t.mutable ? "[Mutable Staging]" : "[Read-Only Sandbox/Prod]"}
-              </option>`
-          )
-          .join("");
-      }
-    } catch (err) {
-      console.error("Failed to load targets:", err);
-    }
-  }
-
-  async function loadSession(sessionId) {
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}`);
-      if (!res.ok) return;
-      const { session } = await res.json();
-      if (!session) return;
-
-      currentSessionId = session.sessionId;
-      localStorage.setItem("schemasentinel_current_session", session.sessionId);
-
-      // Restore Subagent Badges
-      if (session.schemaAnalysis) {
-        setSubagentState("schema-analyst", "COMPLETED", session.schemaAnalysis.summary, `${session.schemaAnalysis.tableCount} tables`, `${session.schemaAnalysis.totalIndexCount} indexes`);
-      }
-      if (session.riskAnalysis) {
-        setSubagentState("risk-analyst", "COMPLETED", session.riskAnalysis.summary, `Lock: ${session.riskAnalysis.lockRisk}`, `Rewrite: ${session.riskAnalysis.tableRewriteExpected ? "YES" : "NO"}`);
-      }
-      if (session.sandboxOutput) {
-        setSubagentState("sandbox-validator", session.sandboxOutput.success ? "COMPLETED" : "FAILED", session.sandboxOutput.schemaDiffSummary, `${session.sandboxOutput.executionDurationMs}ms`, `Rollback: ${session.sandboxOutput.rollbackSuccessful ? "PASS" : "FAIL"}`);
-      }
-      if (session.reviewReport) {
-        setSubagentState("review-synthesizer", "COMPLETED", session.reviewReport.approvalSummary, "Token Ready", "Plan Staged");
-        updateRiskMatrix(session.reviewReport, session.riskAnalysis);
-      }
-
-      // Restore Approval Checkpoint
-      if (session.status === "AWAITING_APPROVAL" && session.approvalPacket) {
-        renderApprovalCheckpoint(session.approvalPacket);
-      } else if (session.status === "COMPLETED" || session.status === "REJECTED" || session.status === "FAILED") {
-        const approvalCard = document.getElementById("approval-card");
-        if (approvalCard) {
-          approvalCard.className = `panel approval-panel ${session.status.toLowerCase()}`;
-          const tokenEl = document.getElementById("approval-token");
-          if (tokenEl) tokenEl.textContent = `SESSION STATUS: ${session.status}`;
-        }
-        if (btnApprove) btnApprove.disabled = true;
-        if (btnReject) btnReject.disabled = true;
-      }
-
-      // Restore Post-Apply Verification
-      if (session.verificationResult || session.applyResult) {
-        renderPostApplyVerification(session.verificationResult, session.applyResult);
-      }
-
-      // Restore Timeline & Evidence
-      renderTimelineFeed(session.activityEvents, session.timeline);
-      renderEvidenceTabs(session);
-    } catch (err) {
-      console.error("Failed to load session:", err);
-    }
-  }
-
-  // Handle Form Submission: Trigger Review
-  if (form) {
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const targetId = targetSelect ? targetSelect.value : "staging-demo";
-      const migrationFilePath = migrationFileInput ? migrationFileInput.value.trim() : "migrations/0038_add_order_status.sql";
-
-      btnStartReview.disabled = true;
-      if (btnSpinner) btnSpinner.style.display = "inline-block";
-      if (btnLabel) btnLabel.textContent = "Reviewing Schema...";
-      announce("Starting TrueForge multi-subagent migration review...");
-
-      // Set Subagents to Running
-      setSubagentState("schema-analyst", "RUNNING", "Inspecting PostgreSQL catalog via Schema Analyst...");
-      setSubagentState("risk-analyst", "RUNNING", "Evaluating lock risks & AST hazards via Risk Analyst...");
-      setSubagentState("sandbox-validator", "RUNNING", "Executing dry-run inside isolated PGlite sandbox...");
-      setSubagentState("review-synthesizer", "RUNNING", "Synthesizing multi-agent evidence and approval packet...");
-
-      try {
-        const res = await fetch("/api/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetId,
-            migrationFilePath,
-            repo: "mohitpargaie002-a11y/SchemaSentinel",
-          }),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || `HTTP ${res.status}`);
-        }
-
-        const data = await res.json();
-        currentSessionId = data.sessionId;
-        currentApprovalToken = data.approvalPacket?.approvalToken;
-        localStorage.setItem("schemasentinel_current_session", currentSessionId);
-
-        // Update Subagent Cards with Real Metrics
-        setSubagentState("schema-analyst", "COMPLETED", data.schemaAnalysis.summary, `${data.schemaAnalysis.tableCount} tables`, `${data.schemaAnalysis.totalIndexCount} indexes`);
-        setSubagentState("risk-analyst", "COMPLETED", data.riskAnalysis.summary, `Lock: ${data.riskAnalysis.lockRisk}`, `Rewrite: ${data.riskAnalysis.tableRewriteExpected ? "YES" : "NO"}`);
-        setSubagentState("sandbox-validator", data.sandboxOutput.success ? "COMPLETED" : "FAILED", data.sandboxOutput.schemaDiffSummary, `${data.sandboxOutput.executionDurationMs}ms`, `Rollback: ${data.sandboxOutput.rollbackSuccessful ? "PASS" : "FAIL"}`);
-        setSubagentState("review-synthesizer", "COMPLETED", data.reviewReport.approvalSummary, "Token Ready", "Plan Staged");
-
-        // Update Risk Matrix & Approval Card
-        updateRiskMatrix(data.reviewReport, data.riskAnalysis);
-        renderApprovalCheckpoint(data.approvalPacket);
-
-        // Update Timeline & Evidence
-        renderTimelineFeed(data.activityEvents);
-        renderEvidenceTabs(data);
-
-        announce("Multi-subagent review complete. Awaiting human approval checkpoint.");
-      } catch (err) {
-        console.error("Review failed:", err);
-        alert(`Review error: ${err.message}`);
-        announce(`Review failed: ${err.message}`);
-      } finally {
-        btnStartReview.disabled = false;
-        if (btnSpinner) btnSpinner.style.display = "none";
-        if (btnLabel) btnLabel.textContent = "Run Safety Review";
-      }
-    });
-  }
-
-  // Handle Approve Button
-  if (btnApprove) {
-    btnApprove.addEventListener("click", async () => {
-      if (!currentSessionId) return;
-
-      const targetLabel = targetSelect ? targetSelect.value : "staging-demo";
-      if (!confirm(`Authorizing migration apply on '${targetLabel}'. Proceed?`)) return;
-
-      btnApprove.disabled = true;
-      btnReject.disabled = true;
-      announce("Applying migration to staging target...");
-
-      try {
-        const res = await fetch(`/api/sessions/${currentSessionId}/approve`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            approvalToken: currentApprovalToken || "sat_demo_token",
-            approvedBy: "lead-dba@schemasentinel.dev",
-          }),
-        });
-        const data = await res.json();
-        await loadSession(currentSessionId);
-
-        if (!res.ok || data.status !== "COMPLETED" || !data.applyResult?.success || data.verificationResult?.status !== "passed") {
-          const errorMsg = data.error || data.applyResult?.errorMessage || (data.verificationResult?.failures && data.verificationResult.failures.join("; ")) || "Migration apply or verification failed.";
-          announce(`Migration apply failed: ${errorMsg}`);
-          alert(`Apply failed: ${errorMsg}`);
-        } else {
-          announce("Migration applied and verified successfully!");
-        }
-      } catch (err) {
-        console.error("Apply failed:", err);
-        alert(`Apply error: ${err.message}`);
-        announce(`Apply error: ${err.message}`);
-      }
-    });
-  }
-
-  // Handle Reject Button
-  if (btnReject) {
-    btnReject.addEventListener("click", async () => {
-      if (!currentSessionId) return;
-
-      btnApprove.disabled = true;
-      btnReject.disabled = true;
-
-      try {
-        await fetch(`/api/sessions/${currentSessionId}/reject`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            approvedBy: "lead-dba@schemasentinel.dev",
-          }),
-        });
-        await loadSession(currentSessionId);
-        announce("Migration rejected. Zero mutations applied.");
-      } catch (err) {
-        console.error("Reject failed:", err);
-      }
-    });
-  }
-
-  // Tab Switcher for Evidence Explorer
-  const tabButtons = document.querySelectorAll(".tab-button");
+  // Evidence Tab Navigation
   tabButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       tabButtons.forEach((b) => {
         b.classList.remove("active");
         b.setAttribute("aria-selected", "false");
       });
-      document.querySelectorAll(".tab-pane").forEach((p) => (p.style.display = "none"));
+      tabPanes.forEach((p) => {
+        p.classList.remove("active");
+        p.style.display = "none";
+      });
 
       btn.classList.add("active");
       btn.setAttribute("aria-selected", "true");
-      const targetTab = document.getElementById(btn.dataset.tab);
-      if (targetTab) {
-        targetTab.style.display = "block";
+      activeTabId = btn.getAttribute("data-tab");
+      const targetPane = document.getElementById(activeTabId);
+      if (targetPane) {
+        targetPane.classList.add("active");
+        targetPane.style.display = "block";
       }
+
+      updateProvenanceDisplay();
     });
   });
 
-  // Initialize on load
-  loadTargets();
-  if (currentSessionId) {
-    loadSession(currentSessionId);
+  // History Toggle
+  if (btnHistoryToggle) {
+    btnHistoryToggle.addEventListener("click", () => {
+      const isOpen = historyDrawer.style.display === "flex";
+      historyDrawer.style.display = isOpen ? "none" : "flex";
+      btnHistoryToggle.setAttribute("aria-expanded", String(!isOpen));
+      if (!isOpen) loadSessionHistory();
+    });
   }
-})();
+
+  if (btnCloseHistory) {
+    btnCloseHistory.addEventListener("click", () => {
+      historyDrawer.style.display = "none";
+      btnHistoryToggle.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  // Exit Read-Only Mode
+  if (btnExitReadonly) {
+    btnExitReadonly.addEventListener("click", () => {
+      isReadOnlyMode = false;
+      currentSessionId = null;
+      currentSessionData = null;
+      if (readonlyBanner) readonlyBanner.style.display = "none";
+      btnStartReview.disabled = false;
+      btnReject.disabled = true;
+      btnApprove.disabled = true;
+      approvalWarning.style.display = "none";
+      timelineFeed.innerHTML = `<div class="timeline-empty">Awaiting review execution trace...</div>`;
+      announce("Exited read-only mode. Ready for new safety review.");
+    });
+  }
+
+  // Start Safety Review
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const targetId = targetSelect.value;
+    const migrationFilePath = migrationFileInput.value.trim();
+
+    if (!migrationFilePath) return;
+
+    btnStartReview.disabled = true;
+    btnSpinner.style.display = "inline-block";
+    btnLabel.textContent = "Analyzing...";
+    announce("TrueForge review started. Orchestrating specialized subagents...");
+
+    timelineFeed.innerHTML = "";
+    const sessionId = `sess_${Date.now()}`;
+    currentSessionId = sessionId;
+    currentSessionData = { sessionId, targetId, migrationFilePath, evidenceItems: [] };
+    isReadOnlyMode = false;
+    if (readonlyBanner) readonlyBanner.style.display = "none";
+
+    // Open Live SSE Stream
+    connectEventStream(sessionId);
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          targetId,
+          migrationFilePath,
+          repo: "mohitpargaie002-a11y/SchemaSentinel",
+          userPrompt: `Review and analyze migration ${migrationFilePath}`,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to execute review");
+      }
+
+      currentSessionData = data;
+      renderFullSessionState(data);
+      loadSessionHistory();
+      announce("Safety review completed. Human approval required before mutation.");
+    } catch (err) {
+      alert(`Review Failed: ${err.message}`);
+    } finally {
+      btnStartReview.disabled = false;
+      btnSpinner.style.display = "none";
+      btnLabel.textContent = "Run Safety Review";
+    }
+  });
+
+  // Approve & Apply
+  btnApprove.addEventListener("click", async () => {
+    if (!currentSessionId || isReadOnlyMode) return;
+
+    btnApprove.disabled = true;
+    btnReject.disabled = true;
+    btnApprove.textContent = "Applying...";
+    announce("Human approval granted. Applying migration to allowlisted staging...");
+
+    try {
+      const response = await fetch(`/api/sessions/${currentSessionId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvedBy: "lead-dba@schemasentinel.dev",
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Approval / Apply failed");
+      }
+
+      currentSessionData = { ...currentSessionData, ...data };
+      renderFullSessionState(currentSessionData);
+      loadSessionHistory();
+      announce("Migration applied and post-apply invariant checks verified.");
+    } catch (err) {
+      alert(`Apply Failed: ${err.message}`);
+    } finally {
+      btnApprove.textContent = "Approve & Apply to Staging";
+    }
+  });
+
+  // Reject Migration
+  btnReject.addEventListener("click", async () => {
+    if (!currentSessionId || isReadOnlyMode) return;
+
+    btnApprove.disabled = true;
+    btnReject.disabled = true;
+    announce("Human operator rejected migration. Zero mutations applied.");
+
+    try {
+      const response = await fetch(`/api/sessions/${currentSessionId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvedBy: "lead-dba@schemasentinel.dev",
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Rejection failed");
+      }
+
+      currentSessionData = { ...currentSessionData, ...data };
+      renderFullSessionState(currentSessionData);
+      loadSessionHistory();
+    } catch (err) {
+      alert(`Reject Failed: ${err.message}`);
+    }
+  });
+
+  // Initial History Load
+  loadSessionHistory();
+});

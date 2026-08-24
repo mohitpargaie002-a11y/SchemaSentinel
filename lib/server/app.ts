@@ -4,10 +4,12 @@ import path from "path";
 import { defaultOrchestrator, TrueForgeOrchestrator } from "../agent/orchestrator.js";
 import { defaultSessionStore, ISessionStore, PersistedSessionState } from "../agent/session-store.js";
 import { defaultTargetRegistry, TargetRegistry } from "../safety/target-allowlist.js";
+import { SessionEventBroadcaster } from "../agent/event-stream.js";
 import {
   ApproveSessionRequestSchema,
   CreateSessionRequestSchema,
   RejectSessionRequestSchema,
+  SessionSummary,
 } from "../domain/contracts.js";
 
 const MAX_BODY_SIZE = 1024 * 1024; // 1 MB defensive limit
@@ -18,14 +20,16 @@ export interface CreateServerOptions {
   targetRegistry?: TargetRegistry;
   staticDir?: string;
   allowedOrigins?: string[];
+  broadcaster?: SessionEventBroadcaster;
 }
 
 export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
   const sessionStore = options.sessionStore || defaultSessionStore;
+  const broadcaster = options.broadcaster || SessionEventBroadcaster.getInstance();
   const orchestrator =
     options.orchestrator ||
     (options.sessionStore
-      ? new TrueForgeOrchestrator(undefined, undefined, undefined, sessionStore)
+      ? new TrueForgeOrchestrator(undefined, undefined, undefined, sessionStore, undefined, undefined, undefined, undefined, undefined, undefined, broadcaster)
       : defaultOrchestrator);
   const targetRegistry = options.targetRegistry || defaultTargetRegistry;
   const staticDir = options.staticDir || path.resolve(process.cwd(), "public");
@@ -150,24 +154,32 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         return sendJson(200, { targets });
       }
 
-      // 3. List Sessions API (Sanitizes tokens)
+      // 3. List Sessions API (Summaries with Provenance & Risk for Session History)
       if (req.method === "GET" && pathname === "/api/sessions") {
         const sessionIds = await sessionStore.listSessions();
-        const summaries = [];
+        const summaries: SessionSummary[] = [];
         for (const id of sessionIds) {
           const s = await sessionStore.loadSession(id);
           if (s) {
+            const targetConfig = targetRegistry.getTarget(s.targetId);
             summaries.push({
               sessionId: s.sessionId,
-              targetId: s.targetId,
-              status: s.status,
-              currentStep: s.currentStep,
               migrationFilePath: s.migrationFilePath,
+              targetId: s.targetId,
+              targetEnvironment: targetConfig ? targetConfig.environment : "staging",
+              overallRisk: s.reviewReport?.overallRisk || s.plan?.riskLevel || "LOW",
+              status: s.status,
               createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
+              completedAt: s.completedAt,
+              approvalState: s.status === "AWAITING_APPROVAL" ? "Awaiting Approval" : s.status === "COMPLETED" ? "Approved & Applied" : s.status === "REJECTED" ? "Rejected" : s.status,
+              isReadOnly: s.isReadOnly ?? (s.status === "COMPLETED" || s.status === "REJECTED"),
+              tableCount: s.schemaAnalysis?.tableCount || s.schemaSnapshot?.tables.length || 0,
+              eventCount: (s.activityEvents || []).length,
             });
           }
         }
+        // Sort newest first
+        summaries.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         return sendJson(200, { sessions: summaries });
       }
 
@@ -208,10 +220,50 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
           riskAnalysis: result.riskAnalysis,
           sandboxOutput: result.sandboxOutput,
           activityEvents: result.activityEvents,
+          evidenceItems: result.evidenceItems,
         });
       }
 
-      // 5. Get Single Session API (Sanitizes tokens)
+      // 5. Live Server-Sent Events (SSE) Stream API
+      const sseMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/events\/stream$/);
+      if (req.method === "GET" && sseMatch) {
+        const sessionId = sseMatch[1];
+        
+        // Setup SSE Headers
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+
+        // Send initial connection event
+        res.write(`event: open\ndata: ${JSON.stringify({ sessionId, status: "connected", timestamp: new Date().toISOString() })}\n\n`);
+
+        const unsubscribe = broadcaster.subscribe(sessionId, {
+          onActivityEvent: (event) => {
+            res.write(`event: activity\ndata: ${JSON.stringify(event)}\n\n`);
+          },
+          onEvidenceItem: (evidence) => {
+            res.write(`event: evidence\ndata: ${JSON.stringify(evidence)}\n\n`);
+          },
+          onStateChange: (status) => {
+            res.write(`event: state\ndata: ${JSON.stringify({ sessionId, status, timestamp: new Date().toISOString() })}\n\n`);
+          },
+          onClose: () => {
+            res.write(`event: close\ndata: ${JSON.stringify({ sessionId, status: "stream_closed" })}\n\n`);
+            res.end();
+          },
+        });
+
+        req.on("close", () => {
+          unsubscribe();
+        });
+
+        return;
+      }
+
+      // 6. Get Single Session API (Sanitizes tokens, includes evidence provenance)
       const singleSessionMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)$/);
       if (req.method === "GET" && singleSessionMatch) {
         const sessionId = singleSessionMatch[1];
@@ -222,7 +274,7 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         return sendJson(200, { session: sanitizeSessionState(session) });
       }
 
-      // 6. Get Session Events API
+      // 7. Get Session Events API (Historical Events)
       const eventsMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/events$/);
       if (req.method === "GET" && eventsMatch) {
         const sessionId = eventsMatch[1];
@@ -235,10 +287,11 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
           status: session.status,
           timeline: session.timeline || [],
           activityEvents: session.activityEvents || [],
+          evidenceItems: session.evidenceItems || [],
         });
       }
 
-      // 7. Approve Session API (Zod Boundary Validation & Authorization)
+      // 8. Approve Session API (Zod Boundary Validation & Authorization)
       const approveMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/approve$/);
       if (req.method === "POST" && approveMatch) {
         const sessionId = approveMatch[1];
@@ -278,10 +331,11 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
           verificationResult: resumeResult.verificationResult,
           timeline: resumeResult.sessionState.timeline,
           activityEvents: resumeResult.sessionState.activityEvents,
+          evidenceItems: resumeResult.sessionState.evidenceItems,
         });
       }
 
-      // 8. Reject Session API (Zod Boundary Validation)
+      // 9. Reject Session API (Zod Boundary Validation)
       const rejectMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/reject$/);
       if (req.method === "POST" && rejectMatch) {
         const sessionId = rejectMatch[1];
@@ -304,10 +358,11 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
           status: rejectResult.sessionState.status,
           timeline: rejectResult.sessionState.timeline,
           activityEvents: rejectResult.sessionState.activityEvents,
+          evidenceItems: rejectResult.sessionState.evidenceItems,
         });
       }
 
-      // 9. Static File Serving (Web UI)
+      // 10. Static File Serving (Web UI)
       let filePath = pathname === "/" ? "/index.html" : pathname;
       const safePath = path.normalize(path.join(staticDir, filePath));
 
