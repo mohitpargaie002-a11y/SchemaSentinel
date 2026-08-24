@@ -18,3 +18,8 @@ export * from "./agent/runner.js";
 export * from "./agent/risk-analyzer.js";
 export * from "./agent/session-store.js";
 export * from "./agent/session.js";
+export * from "./agent/orchestrator.js";
+export * from "./agent/subagents/schema-analyst.js";
+export * from "./agent/subagents/risk-analyst.js";
+export * from "./agent/subagents/sandbox-validator.js";
+export * from "./agent/subagents/review-synthesizer.js";

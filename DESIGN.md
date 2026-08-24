@@ -20,20 +20,38 @@ SchemaSentinel is an **engineering mission-control system** designed for DBAs, p
 
 ## 3. Core UI Surfaces
 
-### 3.1 Agent Execution Timeline
-Displays step-by-step progress with explicit statuses:
-`Queued` → `Inspecting Schema` → `Sandbox Dry-Run` → `Risk Analysis` → **`Awaiting Approval`** → `Applying Migration` → `Verified`.
+### 3.1 Specialized Subagent Activity Grid
+Displays 4 dedicated agent cards:
+- **Schema Analyst**: Catalog tables, indexes, volume estimates, status badges.
+- **Risk Analyst**: Lock severity, table rewrites, identified hazards.
+- **Sandbox Validator**: PGlite execution duration, assertion counts, rollback status.
+- **Review Synthesizer**: Evidence collation, SHA-256 fingerprint, approval readiness.
 
 ### 3.2 Structured Risk Matrix
 Presents quantitative metrics:
 - **Lock Risk**: `LOW` / `MEDIUM` / `HIGH` / `EXCLUSIVE LOCK (CRITICAL)`
-- **Estimated Rows Affected**: e.g., `2.4M rows`
+- **Estimated Rows Affected**: e.g., `50,000 rows`
 - **Table Rewrite Detected**: `YES` / `NO`
 - **Rollback Compatibility**: `PASS` / `FAIL`
 
 ### 3.3 The Human Approval Boundary
 An explicit, non-bypassable verification card:
-- Displays target database name & environment
-- Shows exact SQL diff with syntax highlighting
-- Displays SHA-256 plan fingerprint
-- Offers explicit **[Reject]** and **[Approve & Apply (Irreversible)]** actions
+- Displays target database name & environment (`staging-demo`).
+- Displays SHA-256 plan fingerprint & redacted single-use token.
+- Irreversible execution warning banner.
+- Offers explicit **[Reject Migration]** and **[Approve & Apply to Staging]** actions.
+
+### 3.4 Post-Apply Verification Invariant Results
+Renders live assertion check results after staging execution:
+- Catalog schema introspection verification.
+- Column structure & normalized datatype checks.
+- Index creation checks.
+- Application smoke queries (3 queries).
+- Unintended table deletion assertions.
+
+### 3.5 Deep Evidence & Audit Explorer
+Tabbed explorer displaying raw telemetry:
+- Candidate SQL diff.
+- Target catalog snapshot.
+- PGlite sandbox execution logs.
+- Cryptographic migration audit log.

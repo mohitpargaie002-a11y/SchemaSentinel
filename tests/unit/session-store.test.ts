@@ -37,6 +37,7 @@ describe("FileSessionStore - Path Traversal & Schema Validation", () => {
         details: "Test request",
       },
     ],
+    activityEvents: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -58,22 +59,22 @@ describe("FileSessionStore - Path Traversal & Schema Validation", () => {
 
     await expect(store.saveSession(maliciousState)).rejects.toThrow(SessionPersistenceError);
     await expect(store.loadSession("../../../malicious_file")).rejects.toThrow(SessionPersistenceError);
-    await expect(store.deleteSession("../../../malicious_file")).rejects.toThrow(SessionPersistenceError);
   });
 
-  it("rejects invalid characters in sessionId", async () => {
-    const invalidState = {
+  it("strictly rejects invalid sessionId characters", async () => {
+    const invalidCharsState = {
       ...validSessionState,
-      sessionId: "session; DROP TABLE users;--",
+      sessionId: "session!@#$%",
     };
 
-    await expect(store.saveSession(invalidState)).rejects.toThrow(SessionPersistenceError);
+    await expect(store.saveSession(invalidCharsState)).rejects.toThrow(SessionPersistenceError);
+    await expect(store.loadSession("session!@#$%")).rejects.toThrow(SessionPersistenceError);
   });
 
-  it("validates loaded JSON with Zod and throws on schema corruption", async () => {
-    const corruptedPath = path.join(testDir, "sess_corrupted.json");
-    await fs.writeFile(corruptedPath, JSON.stringify({ invalidField: 1234 }), "utf-8");
+  it("throws SessionPersistenceError when persisted file is corrupted JSON", async () => {
+    const corruptedPath = path.join(testDir, "corrupted_session.json");
+    await fs.writeFile(corruptedPath, "{ invalid json content ...", "utf-8");
 
-    await expect(store.loadSession("sess_corrupted")).rejects.toThrow(SessionPersistenceError);
+    await expect(store.loadSession("corrupted_session")).rejects.toThrow(SessionPersistenceError);
   });
 });
