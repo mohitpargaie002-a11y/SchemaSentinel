@@ -2,12 +2,12 @@ import {
   AgentContext,
   AgentTimelineEvent,
 } from "./types.js";
-import { PostgresMcpService, defaultPostgresMcpService } from "../mcp/postgres.js";
-import { GithubMcpService, defaultGithubMcpService } from "../mcp/github.js";
-import { PGliteSandboxRunner, defaultSandboxRunner } from "../sandbox/pglite-runner.js";
+import { IPostgresMcpService, defaultPostgresMcpService } from "../mcp/postgres.js";
+import { IGithubMcpService, defaultGithubMcpService } from "../mcp/github.js";
+import { ISandboxRunner, defaultSandboxRunner } from "../sandbox/pglite-runner.js";
 import { BASELINE_ECOMMERCE_SCHEMA, BASELINE_SEED_DATA, SAMPLE_REPRESENTATIVE_QUERIES } from "../sandbox/fixtures.js";
-import { ApprovalGate, defaultApprovalGate } from "../safety/approval-gate.js";
-import { MigrationRiskAnalyzer, defaultRiskAnalyzer, ComprehensiveRiskReport } from "./risk-analyzer.js";
+import { IApprovalGate, defaultApprovalGate } from "../safety/approval-gate.js";
+import { IRiskAnalyzer, defaultRiskAnalyzer, ComprehensiveRiskReport } from "./risk-analyzer.js";
 import { MigrationPlan, SandboxValidationResult, SchemaSnapshot } from "../domain/contracts.js";
 
 export interface TrueForgeApprovalPacket {
@@ -34,24 +34,80 @@ export interface TrueForgeApprovalPacket {
 }
 
 export class TrueForgeMigrationSession {
-  private postgresMcp: PostgresMcpService;
-  private githubMcp: GithubMcpService;
-  private sandboxRunner: PGliteSandboxRunner;
-  private riskAnalyzer: MigrationRiskAnalyzer;
-  private approvalGate: ApprovalGate;
+  private postgresMcp: IPostgresMcpService;
+  private githubMcp: IGithubMcpService;
+  private sandboxRunner: ISandboxRunner;
+  private riskAnalyzer: IRiskAnalyzer;
+  private approvalGate: IApprovalGate;
 
   constructor(
-    postgresMcp: PostgresMcpService = defaultPostgresMcpService,
-    githubMcp: GithubMcpService = defaultGithubMcpService,
-    sandboxRunner: PGliteSandboxRunner = defaultSandboxRunner,
-    riskAnalyzer: MigrationRiskAnalyzer = defaultRiskAnalyzer,
-    approvalGate: ApprovalGate = defaultApprovalGate
+    postgresMcp: IPostgresMcpService = defaultPostgresMcpService,
+    githubMcp: IGithubMcpService = defaultGithubMcpService,
+    sandboxRunner: ISandboxRunner = defaultSandboxRunner,
+    riskAnalyzer: IRiskAnalyzer = defaultRiskAnalyzer,
+    approvalGate: IApprovalGate = defaultApprovalGate
   ) {
     this.postgresMcp = postgresMcp;
     this.githubMcp = githubMcp;
     this.sandboxRunner = sandboxRunner;
     this.riskAnalyzer = riskAnalyzer;
     this.approvalGate = approvalGate;
+  }
+
+  /**
+   * Helper to dynamically parse affected tables, created indexes/columns, and generate a reversible rollback script.
+   */
+  private parsePlanMetadata(rawSql: string, migrationFilePath: string): {
+    affectedTables: string[];
+    migrationSummary: string;
+    rollbackSql: string;
+  } {
+    const tableSet = new Set<string>();
+    const rollbackStatements: string[] = [];
+    const summaryParts: string[] = [];
+
+    // Parse CREATE INDEX
+    const indexMatches = rawSql.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?([^\s;]+)\s+ON\s+([^\s;(]+)/gi);
+    for (const match of indexMatches) {
+      const indexName = match[1].replace(/['"`]/g, "");
+      const tableName = match[2].replace(/['"`]/g, "");
+      tableSet.add(tableName);
+      rollbackStatements.unshift(`DROP INDEX IF EXISTS ${indexName};`);
+      summaryParts.push(`Create index ${indexName} on ${tableName}`);
+    }
+
+    // Parse ALTER TABLE ... ADD COLUMN
+    const addColMatches = rawSql.matchAll(/ALTER\s+TABLE\s+([^\s;]+)\s+ADD\s+COLUMN\s+([^\s;]+)/gi);
+    for (const match of addColMatches) {
+      const tableName = match[1].replace(/['"`]/g, "");
+      const colName = match[2].replace(/['"`]/g, "");
+      tableSet.add(tableName);
+      rollbackStatements.push(`ALTER TABLE ${tableName} DROP COLUMN IF EXISTS ${colName};`);
+      summaryParts.push(`Add column ${colName} to ${tableName}`);
+    }
+
+    // Parse generic ALTER TABLE
+    const alterTableMatches = rawSql.matchAll(/ALTER\s+TABLE\s+([^\s;]+)/gi);
+    for (const match of alterTableMatches) {
+      tableSet.add(match[1].replace(/['"`]/g, ""));
+    }
+
+    // Parse DROP TABLE
+    const dropTableMatches = rawSql.matchAll(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([^\s;]+)/gi);
+    for (const match of dropTableMatches) {
+      tableSet.add(match[1].replace(/['"`]/g, ""));
+      summaryParts.push(`Drop table ${match[1]}`);
+    }
+
+    const affectedTables = tableSet.size > 0 ? Array.from(tableSet) : ["unspecified_schema"];
+    const migrationSummary = summaryParts.length > 0 ? summaryParts.join(", ") : `Execute migration on ${affectedTables.join(", ")}`;
+    const rollbackSql = `-- Rollback for ${migrationFilePath}\n${rollbackStatements.join("\n") || "-- No automated rollback statements generated"}`;
+
+    return {
+      affectedTables,
+      migrationSummary,
+      rollbackSql,
+    };
   }
 
   /**
@@ -106,9 +162,9 @@ export class TrueForgeMigrationSession {
       `Risk Analysis Complete: Overall Risk = ${riskReport.overallRisk}, Lock Risk = ${riskReport.lockRisk}, Findings = ${riskReport.findings.length}.`
     );
 
-    // STEP 5: Generate Candidate Migration Plan
+    // STEP 5: Generate Candidate Migration Plan (Derived dynamically)
     const planId = `plan_${Date.now()}`;
-    const rollbackSql = `-- Rollback for ${params.migrationFilePath}\nDROP INDEX IF EXISTS idx_orders_status;\nALTER TABLE orders DROP COLUMN IF EXISTS status;`;
+    const { affectedTables, migrationSummary, rollbackSql } = this.parsePlanMetadata(rawSql, params.migrationFilePath);
 
     const plan: MigrationPlan = {
       id: planId,
@@ -118,7 +174,7 @@ export class TrueForgeMigrationSession {
       rawSql,
       riskLevel: riskReport.overallRisk,
       riskFactors: riskReport.findings.map((f) => `[${f.code}] ${f.title}: ${f.description}`),
-      affectedTables: ["orders"],
+      affectedTables,
       rollbackSql,
       createdAt: new Date().toISOString(),
     };
@@ -155,20 +211,23 @@ export class TrueForgeMigrationSession {
     // Generate signed approval token and fingerprint
     const checkpoint = this.approvalGate.grantApproval(params.sessionId, plan);
 
+    // Precise data integrity evaluation: all assertions must pass without failure
+    const dataIntegrityPassed = sandboxResult.success && sandboxResult.assertionsFailed.length === 0 && sandboxResult.assertionsPassed.length > 0;
+
     const approvalPacket: TrueForgeApprovalPacket = {
       sessionId: params.sessionId,
       planId: plan.id,
       targetId: params.targetId,
       targetEnvironment: "staging-demo",
       migrationFilename: params.migrationFilePath,
-      migrationSummary: "Add fulfillment status column and index on orders table",
+      migrationSummary,
       riskLevel: riskReport.overallRisk,
       lockRisk: riskReport.lockRisk,
       tableRewriteExpected: riskReport.tableRewriteExpected,
       affectedObjects: plan.affectedTables,
       sandboxStatus: sandboxResult.success ? "PASS" : "FAIL",
       rollbackStatus: sandboxResult.rollbackSuccessful ? "PASS" : "FAIL",
-      dataIntegrityStatus: sandboxResult.assertionsPassed.length > 0 ? "PASS" : "FAIL",
+      dataIntegrityStatus: dataIntegrityPassed ? "PASS" : "FAIL",
       candidateSql: plan.rawSql,
       remediatedStagedSql: riskReport.remediatedStagedSql,
       isModifiedFromOriginal: !!riskReport.remediatedStagedSql,

@@ -14,7 +14,27 @@ describe("MigrationRiskAnalyzer - Deep Risk & Locking Evaluation", () => {
     expect(report.requiresStagedRollout).toBe(true);
     expect(report.remediatedStagedSql).toBeDefined();
     expect(report.remediatedStagedSql).toContain("Phase 1: Expand");
+    expect(report.remediatedStagedSql).toContain("Phase 3: Batched Backfill");
+    expect(report.remediatedStagedSql).toContain("LIMIT 5000");
     expect(report.remediatedStagedSql).toContain("CREATE INDEX CONCURRENTLY");
+  });
+
+  it("sanitizes schema-qualified or quoted identifiers in generated index names", () => {
+    const schemaQualifiedSql = 'ALTER TABLE "public"."orders" ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT \'active\';';
+    const report = analyzer.analyzeRisk(schemaQualifiedSql);
+
+    expect(report.remediatedStagedSql).toBeDefined();
+    expect(report.remediatedStagedSql).toContain("CREATE INDEX CONCURRENTLY idx_public_orders_status ON");
+  });
+
+  it("reports lockRisk as NONE when no lock-holding operations are found", () => {
+    const safeSql = "SELECT 1;";
+    const report = analyzer.analyzeRisk(safeSql);
+
+    expect(report.overallRisk).toBe("LOW");
+    expect(report.lockRisk).toBe("NONE");
+    expect(report.tableRewriteExpected).toBe(false);
+    expect(report.requiresStagedRollout).toBe(false);
   });
 
   it("detects blocking share lock on non-concurrent index creation", () => {
@@ -40,6 +60,7 @@ describe("MigrationRiskAnalyzer - Deep Risk & Locking Evaluation", () => {
     const report = analyzer.analyzeRisk(safeSql);
 
     expect(report.overallRisk).toBe("LOW");
+    expect(report.lockRisk).toBe("LOW");
     expect(report.tableRewriteExpected).toBe(false);
     expect(report.requiresStagedRollout).toBe(false);
   });

@@ -34,10 +34,15 @@ describe("AgentSession - End-to-End Migration Review Vertical Slice", () => {
     expect(result.approvalPacket.rollbackStatus).toBe("PASS");
     expect(result.context.sandboxResult?.assertionsPassed.length).toBeGreaterThan(2);
 
-    // 4. Approval Packet Verification
+    // 4. Approval Packet & Dynamic Metadata Verification
     expect(result.approvalPacket.status).toBe("AWAITING_HUMAN_APPROVAL");
     expect(result.approvalPacket.targetId).toBe("demo-postgres");
     expect(result.approvalPacket.approvalToken).toMatch(/^sat_[a-f0-9]{32}$/);
     expect(result.approvalPacket.sqlFingerprint.length).toBe(64);
+    expect(result.approvalPacket.affectedObjects).toContain("orders");
+    expect(result.context.plan?.rollbackSql).toContain("DROP COLUMN IF EXISTS status");
+    expect(result.context.plan?.rollbackSql).toContain("DROP INDEX IF EXISTS idx_orders_status");
+    expect(result.approvalPacket.migrationSummary).toContain("Add column status to orders");
+    expect(result.approvalPacket.dataIntegrityStatus).toBe("PASS");
   });
 });

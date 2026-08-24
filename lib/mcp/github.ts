@@ -7,7 +7,15 @@ export interface GithubPrCommentPayload {
   approvalStatus: string;
 }
 
-export class GithubMcpService {
+export interface IGithubMcpService {
+  readMigrationFile(repo: string, filePath: string): Promise<string>;
+  createPrComment(
+    repo: string,
+    payload: GithubPrCommentPayload
+  ): Promise<{ commentId: number; htmlUrl: string }>;
+}
+
+export class GithubMcpService implements IGithubMcpService {
   /**
    * MCP Tool: read_migration_file
    */

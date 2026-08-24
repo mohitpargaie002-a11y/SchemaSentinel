@@ -21,14 +21,18 @@ export interface ComprehensiveRiskReport {
   remediatedStagedSql?: string;
 }
 
-export class MigrationRiskAnalyzer {
+export interface IRiskAnalyzer {
+  analyzeRisk(rawSql: string, schemaSnapshot?: SchemaSnapshot): ComprehensiveRiskReport;
+}
+
+export class MigrationRiskAnalyzer implements IRiskAnalyzer {
   /**
    * Analyzes candidate SQL in context of current schema snapshot and row counts.
    */
   public analyzeRisk(rawSql: string, schemaSnapshot?: SchemaSnapshot): ComprehensiveRiskReport {
     const sql = rawSql.toUpperCase();
     const findings: DetailedRiskFinding[] = [];
-    let lockRisk: ComprehensiveRiskReport["lockRisk"] = "LOW";
+    let lockRisk: ComprehensiveRiskReport["lockRisk"] = "NONE";
     let tableRewriteExpected = false;
     let rollbackFeasibility: ComprehensiveRiskReport["rollbackFeasibility"] = "FULLY_REVERSIBLE";
 
@@ -48,7 +52,7 @@ export class MigrationRiskAnalyzer {
         description: `Adding NOT NULL column '${columnName}' with a DEFAULT value to '${tableName}' can trigger full table rewrite and block all reads/writes.`,
         affectedTable: tableName,
         affectedColumn: columnName,
-        remediation: `Staged execution: 1) Add column as nullable, 2) Set DEFAULT for new rows, 3) Backfill existing rows in non-blocking batches, 4) Add NOT NULL constraint.`,
+        remediation: `Staged rollout: 1) Add column as nullable, 2) Set DEFAULT for new writes, 3) Backfill historical records via batched chunks, 4) Enforce NOT NULL constraint.`,
       });
     }
 
@@ -58,7 +62,7 @@ export class MigrationRiskAnalyzer {
       const indexName = indexMatch ? indexMatch[1] : "index";
       const tableName = indexMatch ? indexMatch[2] : "table";
 
-      if (lockRisk === "LOW") {
+      if (lockRisk === "NONE") {
         lockRisk = "MEDIUM";
       }
 
@@ -101,6 +105,11 @@ export class MigrationRiskAnalyzer {
       });
     }
 
+    // Check 5: Benign Alteration (e.g. Add Nullable Column)
+    if (findings.length === 0 && /ALTER\s+TABLE/i.test(sql)) {
+      lockRisk = "LOW";
+    }
+
     // Calculate Overall Risk
     let overallRisk: RiskLevel = "LOW";
     if (findings.some((f) => f.severity === "CRITICAL")) {
@@ -119,6 +128,11 @@ export class MigrationRiskAnalyzer {
       const columnType = notNullDefaultMatch[3].trim();
       const defaultValue = notNullDefaultMatch[4].trim();
 
+      // Sanitize identifier to prevent malformed index names (e.g. public.orders or "Orders")
+      const sanitizedTable = tableName.replace(/['"`]/g, "").replace(/[^a-zA-Z0-9_]/g, "_").replace(/^_+|_+$/g, "").replace(/_+/g, "_").toLowerCase();
+      const sanitizedCol = columnName.replace(/['"`]/g, "").replace(/[^a-zA-Z0-9_]/g, "_").replace(/^_+|_+$/g, "").replace(/_+/g, "_").toLowerCase();
+      const safeIndexName = `idx_${sanitizedTable}_${sanitizedCol}`.substring(0, 63);
+
       remediatedStagedSql = `
 -- [Phase 1: Expand] Add column as nullable without table rewrite
 ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType};
@@ -126,14 +140,23 @@ ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType};
 -- [Phase 2: Default] Set default for subsequent incoming writes
 ALTER TABLE ${tableName} ALTER COLUMN ${columnName} SET DEFAULT ${defaultValue};
 
--- [Phase 3: Backfill] Update existing historical rows in non-blocking batches
-UPDATE ${tableName} SET ${columnName} = ${defaultValue} WHERE ${columnName} IS NULL;
+-- [Phase 3: Batched Backfill] Update existing rows in non-blocking batches of 5000
+-- Run repeatedly until rows updated = 0:
+WITH batch AS (
+  SELECT ctid FROM ${tableName}
+  WHERE ${columnName} IS NULL
+  LIMIT 5000
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE ${tableName}
+SET ${columnName} = ${defaultValue}
+WHERE ctid IN (SELECT ctid FROM batch);
 
--- [Phase 4: Constraint] Enforce NOT NULL without full-table blocking
+-- [Phase 4: Constraint] Enforce NOT NULL constraint after backfill completion
 ALTER TABLE ${tableName} ALTER COLUMN ${columnName} SET NOT NULL;
 
--- [Phase 5: Concurrency] Build index concurrently without write locks
-CREATE INDEX CONCURRENTLY idx_${tableName}_${columnName} ON ${tableName}(${columnName});
+-- [Phase 5: Concurrency] Build index concurrently without blocking write locks
+CREATE INDEX CONCURRENTLY ${safeIndexName} ON ${tableName}(${columnName});
 `.trim();
     }
 
