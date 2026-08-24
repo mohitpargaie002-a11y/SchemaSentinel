@@ -11,7 +11,7 @@ describe("SafetyBoundary - Security Controls & Unauthorized Mutation Rejection",
   const testPlan: MigrationPlan = {
     id: "plan_sec_01",
     sessionId: "sess_sec_01",
-    targetId: "demo-postgres",
+    targetId: "staging-demo",
     userPrompt: "Security test migration",
     rawSql: "ALTER TABLE orders ADD COLUMN sec_tag VARCHAR(16);",
     riskLevel: "LOW",
@@ -20,14 +20,14 @@ describe("SafetyBoundary - Security Controls & Unauthorized Mutation Rejection",
     createdAt: new Date().toISOString(),
   };
 
-  it("blocks applyMigration when no approval token is provided", async () => {
+  it("blocks applyMigration when invalid or missing approval token is provided", async () => {
     await expect(
       postgresMcp.applyMigration(
-        "demo-postgres",
+        "staging-demo",
         "sess_sec_01",
         "plan_sec_01",
         testPlan.rawSql,
-        "invalid_token"
+        "sat_invalid_token_1234567890abcdef"
       )
     ).rejects.toThrow(ApprovalGateError);
   });
@@ -46,7 +46,7 @@ describe("SafetyBoundary - Security Controls & Unauthorized Mutation Rejection",
     );
 
     const result = await postgresMcp.applyMigration(
-      "demo-postgres",
+      "staging-demo",
       "sess_sec_01",
       "plan_sec_01",
       testPlan.rawSql,
@@ -59,7 +59,7 @@ describe("SafetyBoundary - Security Controls & Unauthorized Mutation Rejection",
     // Verify token replay attack is rejected (token must be consumed)
     await expect(
       postgresMcp.applyMigration(
-        "demo-postgres",
+        "staging-demo",
         "sess_sec_01",
         "plan_sec_01",
         testPlan.rawSql,
