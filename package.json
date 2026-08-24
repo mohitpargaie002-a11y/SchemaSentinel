@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "demo": "tsx scripts/day1-proof.ts"
+    "demo": "tsx scripts/day1-proof.ts",
+    "demo:day2": "tsx scripts/day2-proof.ts"
   },
   "keywords": [
     "trueforge",
