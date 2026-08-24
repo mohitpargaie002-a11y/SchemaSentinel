@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.next/
+*.log
+.env
+.env.local
+.env.*.local
+coverage/
+.turbo/
+.DS_Store
+*.tsbuildinfo
+.system_generated/
+sandbox/fixtures/temp/
