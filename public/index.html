@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SchemaSentinel — Database Migration Safety Agent</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Live Announcement for Accessibility -->
+  <div id="aria-live-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-content">
+      <div class="logo-area">
+        <div class="logo-icon" aria-hidden="true">🛡️</div>
+        <div>
+          <h1 class="logo-title">SchemaSentinel</h1>
+          <p class="logo-subtitle">Agentic Database Migration Safety Harness</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <div class="badge badge-cyan" id="system-status-badge">
+          <span class="pulse-dot"></span> Agent Core: Online
+        </div>
+        <div class="badge badge-neutral" id="target-env-badge">Target: staging-demo</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    
+    <!-- Top Control: Migration Request Form -->
+    <section class="card request-card" aria-labelledby="request-heading">
+      <div class="card-header">
+        <h2 id="request-heading" class="card-title">🚀 Migration Review Request</h2>
+        <span class="step-indicator">Phase 1 / Autonomous Assessment</span>
+      </div>
+      <form id="migration-form" class="request-form">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="target-select">Target Database</label>
+            <select id="target-select" class="input-control" required>
+              <option value="staging-demo" selected>staging-demo (Allowlisted Mutable Staging)</option>
+              <option value="demo-postgres">demo-postgres (Read-Only Demo)</option>
+              <option value="prod-postgres">prod-postgres (BLOCKED: Production Target)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="migration-file">Migration File Path</label>
+            <input type="text" id="migration-file" class="input-control" value="migrations/0038_add_order_status.sql" required>
+          </div>
+          <div class="form-group form-action">
+            <button type="submit" id="btn-start-review" class="btn btn-primary">
+              <span class="btn-icon">⚡</span> Run Multi-Agent Safety Review
+            </button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <!-- Subagent Activity Grid -->
+    <section class="subagents-section" aria-labelledby="subagents-heading">
+      <h2 id="subagents-heading" class="section-title">🤖 Specialized TrueForge Subagent Activity</h2>
+      <div class="subagents-grid">
+        
+        <!-- Subagent 1: Schema Analyst -->
+        <article class="card subagent-card" id="agent-schema-analyst">
+          <div class="subagent-header">
+            <div class="agent-icon">🔍</div>
+            <div class="agent-info">
+              <h3 class="agent-name">Schema Analyst</h3>
+              <p class="agent-role">Postgres MCP · Read-Only</p>
+            </div>
+            <span class="agent-status-badge status-idle" id="status-schema-analyst">IDLE</span>
+          </div>
+          <p class="agent-desc" id="desc-schema-analyst">Awaiting review initiation...</p>
+          <div class="agent-metrics" id="metrics-schema-analyst">
+            <span>Tables: <strong>—</strong></span>
+            <span>Indexes: <strong>—</strong></span>
+          </div>
+        </article>
+
+        <!-- Subagent 2: Risk Analyst -->
+        <article class="card subagent-card" id="agent-risk-analyst">
+          <div class="subagent-header">
+            <div class="agent-icon">⚖️</div>
+            <div class="agent-info">
+              <h3 class="agent-name">Risk Analyst</h3>
+              <p class="agent-role">Static AST & Lock Rules</p>
+            </div>
+            <span class="agent-status-badge status-idle" id="status-risk-analyst">IDLE</span>
+          </div>
+          <p class="agent-desc" id="desc-risk-analyst">Awaiting schema snapshot...</p>
+          <div class="agent-metrics" id="metrics-risk-analyst">
+            <span>Lock Risk: <strong>—</strong></span>
+            <span>Table Rewrite: <strong>—</strong></span>
+          </div>
+        </article>
+
+        <!-- Subagent 3: Sandbox Validator -->
+        <article class="card subagent-card" id="agent-sandbox-validator">
+          <div class="subagent-header">
+            <div class="agent-icon">🧪</div>
+            <div class="agent-info">
+              <h3 class="agent-name">Sandbox Validator</h3>
+              <p class="agent-role">PGlite Ephemeral Isolation</p>
+            </div>
+            <span class="agent-status-badge status-idle" id="status-sandbox-validator">IDLE</span>
+          </div>
+          <p class="agent-desc" id="desc-sandbox-validator">Awaiting candidate SQL...</p>
+          <div class="agent-metrics" id="metrics-sandbox-validator">
+            <span>Assertions: <strong>—</strong></span>
+            <span>Rollback: <strong>—</strong></span>
+          </div>
+        </article>
+
+        <!-- Subagent 4: Review Synthesizer -->
+        <article class="card subagent-card" id="agent-review-synthesizer">
+          <div class="subagent-header">
+            <div class="agent-icon">📑</div>
+            <div class="agent-info">
+              <h3 class="agent-name">Review Synthesizer</h3>
+              <p class="agent-role">Evidence Collation & Token</p>
+            </div>
+            <span class="agent-status-badge status-idle" id="status-review-synthesizer">IDLE</span>
+          </div>
+          <p class="agent-desc" id="desc-review-synthesizer">Awaiting validation results...</p>
+          <div class="agent-metrics" id="metrics-review-synthesizer">
+            <span>Evidence: <strong>—</strong></span>
+            <span>Fingerprint: <strong>—</strong></span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- Two-Column Review Layout -->
+    <div class="review-layout">
+      
+      <!-- Left Column: Risk Matrix & Staged Plan -->
+      <div class="review-left">
+        
+        <!-- Risk Matrix -->
+        <section class="card" aria-labelledby="matrix-heading">
+          <div class="card-header">
+            <h2 id="matrix-heading" class="card-title">📊 Quantitative Risk Matrix</h2>
+            <span id="overall-risk-badge" class="badge badge-neutral">Awaiting Run</span>
+          </div>
+          <div class="risk-matrix-grid">
+            <div class="risk-metric-box">
+              <span class="metric-label">Locking Severity</span>
+              <span class="metric-value" id="val-lock-risk">—</span>
+            </div>
+            <div class="risk-metric-box">
+              <span class="metric-label">Table Rewrite</span>
+              <span class="metric-value" id="val-table-rewrite">—</span>
+            </div>
+            <div class="risk-metric-box">
+              <span class="metric-label">Data Integrity</span>
+              <span class="metric-value" id="val-data-integrity">—</span>
+            </div>
+            <div class="risk-metric-box">
+              <span class="metric-label">Sandbox Validation</span>
+              <span class="metric-value" id="val-sandbox-status">—</span>
+            </div>
+            <div class="risk-metric-box">
+              <span class="metric-label">Rollback Verification</span>
+              <span class="metric-value" id="val-rollback-status">—</span>
+            </div>
+            <div class="risk-metric-box">
+              <span class="metric-label">Affected Tables</span>
+              <span class="metric-value" id="val-affected-tables">—</span>
+            </div>
+          </div>
+
+          <!-- Risk Findings List -->
+          <div class="findings-area" id="findings-area" style="display: none;">
+            <h3 class="subsection-title">Identified Hazards & Remediations</h3>
+            <div id="findings-list" class="findings-list"></div>
+          </div>
+        </section>
+
+        <!-- Staged Rollout Plan -->
+        <section class="card" aria-labelledby="plan-heading">
+          <div class="card-header">
+            <h2 id="plan-heading" class="card-title">📋 Recommended Staged Rollout</h2>
+          </div>
+          <div id="staged-plan-list" class="staged-plan-list">
+            <p class="text-muted">Start review to generate staged remediation plan.</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Right Column: Human Approval & Apply Boundary -->
+      <div class="review-right">
+        
+        <!-- Human Approval Card -->
+        <section class="card approval-card" id="approval-card" aria-labelledby="approval-heading">
+          <div class="approval-header">
+            <div class="approval-icon">🔒</div>
+            <div>
+              <h2 id="approval-heading" class="card-title">TrueForge Human Approval Boundary</h2>
+              <p class="approval-subtitle">Non-Bypassable Database Mutation Gate</p>
+            </div>
+          </div>
+
+          <div class="approval-body">
+            <div class="approval-info-box">
+              <div class="info-row">
+                <span class="info-label">Target Database:</span>
+                <span class="info-value font-mono" id="approval-target">staging-demo</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Environment:</span>
+                <span class="info-value font-mono" id="approval-env">staging</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Approval Checksum:</span>
+                <span class="info-value font-mono text-truncate" id="approval-fingerprint">Awaiting Generation</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Approval Token:</span>
+                <span class="info-value font-mono" id="approval-token">Awaiting Authorization</span>
+              </div>
+            </div>
+
+            <div class="warning-banner" id="approval-warning" style="display: none;">
+              <span class="warning-icon">⚠️</span>
+              <div id="warning-text">CAUTION: Approving this checkpoint authorizes irreversible DDL execution on the target database.</div>
+            </div>
+
+            <div class="approval-actions">
+              <button id="btn-reject" class="btn btn-danger" disabled>
+                <span class="btn-icon">✕</span> Reject Migration
+              </button>
+              <button id="btn-approve" class="btn btn-success" disabled>
+                <span class="btn-icon">✓</span> Approve & Apply to Staging
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Post-Apply Verification Invariant Results -->
+        <section class="card verification-card" id="verification-card" style="display: none;" aria-labelledby="verification-heading">
+          <div class="card-header">
+            <h2 id="verification-heading" class="card-title">🛡️ Post-Apply Invariant Verification</h2>
+            <span id="verification-status-badge" class="badge badge-success">PASSED</span>
+          </div>
+          <div id="verification-checks-list" class="verification-checks-list"></div>
+        </section>
+
+        <!-- Live Activity Event Feed -->
+        <section class="card events-card" aria-labelledby="events-heading">
+          <div class="card-header">
+            <h2 id="events-heading" class="card-title">📡 Live Agent Activity Timeline</h2>
+            <span class="badge badge-cyan" id="event-count-badge">0 Events</span>
+          </div>
+          <div id="timeline-feed" class="timeline-feed" tabindex="0" role="region" aria-label="Activity Events Log">
+            <div class="timeline-empty">Agent timeline will stream here in real-time...</div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- Deep Evidence & Details Accordion -->
+    <section class="card evidence-card" aria-labelledby="evidence-heading">
+      <div class="card-header">
+        <h2 id="evidence-heading" class="card-title">🔬 Deep Evidence & Audit Explorer</h2>
+        <span class="text-muted">Click tabs to view low-level telemetry</span>
+      </div>
+      <div class="tab-buttons" role="tablist">
+        <button class="tab-btn active" role="tab" aria-selected="true" data-tab="tab-sql">Migration SQL</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-schema">Target Schema</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-sandbox">Sandbox Logs</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-audit">Audit Trail</button>
+      </div>
+      <div class="tab-contents">
+        <div id="tab-sql" class="tab-pane active" role="tabpanel">
+          <pre><code id="evidence-sql" class="font-mono text-muted">// Candidate SQL will be displayed here</code></pre>
+        </div>
+        <div id="tab-schema" class="tab-pane" role="tabpanel" style="display: none;">
+          <pre><code id="evidence-schema" class="font-mono text-muted">// Target catalog snapshot will be displayed here</code></pre>
+        </div>
+        <div id="tab-sandbox" class="tab-pane" role="tabpanel" style="display: none;">
+          <pre><code id="evidence-sandbox" class="font-mono text-muted">// PGlite dry-run output and assertions will be displayed here</code></pre>
+        </div>
+        <div id="tab-audit" class="tab-pane" role="tabpanel" style="display: none;">
+          <pre><code id="evidence-audit" class="font-mono text-muted">// Cryptographic audit log entries will be displayed here</code></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <div class="footer-content">
+      <span>SchemaSentinel · TrueForge Agent Harness Hackathon</span>
+      <span>Postgres MCP · GitHub MCP · PGlite Sandbox · Qodo Quality Gate</span>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

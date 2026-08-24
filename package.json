@@ -11,9 +11,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "serve": "tsx lib/server/server.ts",
     "demo": "tsx scripts/day1-proof.ts",
     "demo:day2": "tsx scripts/day2-proof.ts",
-    "demo:day3": "tsx scripts/day3-proof.ts"
+    "demo:day3": "tsx scripts/day3-proof.ts",
+    "demo:day4": "tsx scripts/day4-proof.ts"
   },
   "keywords": [
     "trueforge",

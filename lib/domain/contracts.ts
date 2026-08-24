@@ -8,6 +8,7 @@ export const SessionStatusSchema = z.enum([
   "INSPECTING",
   "PLANNING",
   "SANDBOXING",
+  "SYNTHESIZING",
   "AWAITING_APPROVAL",
   "APPROVED",
   "REJECTED",
@@ -17,6 +18,41 @@ export const SessionStatusSchema = z.enum([
   "FAILED",
 ]);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
+
+export const AgentRoleSchema = z.enum([
+  "ORCHESTRATOR",
+  "SCHEMA_ANALYST",
+  "RISK_ANALYST",
+  "SANDBOX_VALIDATOR",
+  "REVIEW_SYNTHESIZER",
+  "SYSTEM",
+  "HUMAN",
+]);
+export type AgentRole = z.infer<typeof AgentRoleSchema>;
+
+export const ActivityEventStatusSchema = z.enum([
+  "QUEUED",
+  "RUNNING",
+  "COMPLETED",
+  "WAITING",
+  "FAILED",
+  "BLOCKED",
+]);
+export type ActivityEventStatus = z.infer<typeof ActivityEventStatusSchema>;
+
+export const AgentActivityEventSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  sessionId: z.string(),
+  phase: z.string(),
+  actor: AgentRoleSchema,
+  status: ActivityEventStatusSchema,
+  message: z.string(),
+  evidence: z.record(z.string(), z.unknown()).optional(),
+  durationMs: z.number().optional(),
+  toolName: z.string().optional(),
+});
+export type AgentActivityEvent = z.infer<typeof AgentActivityEventSchema>;
 
 export const TargetConfigSchema = z.object({
   id: z.string(),
@@ -68,6 +104,26 @@ export const SchemaSnapshotSchema = z.object({
 });
 export type SchemaSnapshot = z.infer<typeof SchemaSnapshotSchema>;
 
+export const SchemaAnalysisResultSchema = z.object({
+  targetId: z.string(),
+  timestamp: z.string(),
+  tableCount: z.number(),
+  totalIndexCount: z.number(),
+  affectedTables: z.array(z.string()),
+  affectedTableDetails: z.array(TableMetadataSchema),
+  foreignKeyDependencies: z.array(
+    z.object({
+      sourceTable: z.string(),
+      sourceColumn: z.string(),
+      targetTable: z.string(),
+      targetColumn: z.string(),
+    })
+  ),
+  volumeEstimates: z.record(z.string(), z.number()),
+  summary: z.string(),
+});
+export type SchemaAnalysisResult = z.infer<typeof SchemaAnalysisResultSchema>;
+
 export const MigrationPlanSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -82,6 +138,34 @@ export const MigrationPlanSchema = z.object({
 });
 export type MigrationPlan = z.infer<typeof MigrationPlanSchema>;
 
+export const RiskFindingSchema = z.object({
+  category: z.string(),
+  level: RiskLevelSchema,
+  description: z.string(),
+  remediation: z.string().optional(),
+});
+export type RiskFinding = z.infer<typeof RiskFindingSchema>;
+
+export const RiskAnalysisResultSchema = z.object({
+  planId: z.string(),
+  overallRisk: RiskLevelSchema,
+  lockRisk: z.enum(["NONE", "LOW", "MEDIUM", "HIGH", "EXCLUSIVE_LOCK_CRITICAL"]),
+  tableRewriteExpected: z.boolean(),
+  dataLossRisk: z.boolean(),
+  findings: z.array(RiskFindingSchema),
+  remediatedStagedSql: z.string().optional(),
+  summary: z.string(),
+});
+export type RiskAnalysisResult = z.infer<typeof RiskAnalysisResultSchema>;
+
+export const SmokeQueryResultSchema = z.object({
+  query: z.string(),
+  rowCount: z.number(),
+  success: z.boolean(),
+  errorMessage: z.string().optional(),
+});
+export type SmokeQueryResult = z.infer<typeof SmokeQueryResultSchema>;
+
 export const SandboxValidationResultSchema = z.object({
   planId: z.string(),
   success: z.boolean(),
@@ -91,8 +175,42 @@ export const SandboxValidationResultSchema = z.object({
   assertionsPassed: z.array(z.string()),
   assertionsFailed: z.array(z.string()),
   rollbackSuccessful: z.boolean(),
+  smokeQueryResults: z.array(SmokeQueryResultSchema).default([]),
 });
 export type SandboxValidationResult = z.infer<typeof SandboxValidationResultSchema>;
+
+export const SandboxValidationOutputSchema = z.object({
+  planId: z.string(),
+  success: z.boolean(),
+  executionDurationMs: z.number(),
+  schemaDiffSummary: z.string(),
+  assertionsPassed: z.array(z.string()),
+  assertionsFailed: z.array(z.string()),
+  rollbackSuccessful: z.boolean(),
+  smokeQueryResults: z.array(SmokeQueryResultSchema),
+  errorMessage: z.string().optional(),
+});
+export type SandboxValidationOutput = z.infer<typeof SandboxValidationOutputSchema>;
+
+export const MigrationReviewReportSchema = z.object({
+  sessionId: z.string(),
+  planId: z.string(),
+  targetId: z.string(),
+  targetEnvironment: z.string(),
+  migrationSummary: z.string(),
+  affectedObjects: z.array(z.string()),
+  overallRisk: RiskLevelSchema,
+  lockRisk: z.string(),
+  tableRewriteExpected: z.boolean(),
+  dataIntegrityStatus: z.enum(["PASS", "FAIL"]),
+  sandboxStatus: z.enum(["PASS", "FAIL"]),
+  rollbackStatus: z.enum(["PASS", "FAIL"]),
+  findings: z.array(RiskFindingSchema),
+  recommendedPlan: z.array(z.string()),
+  approvalSummary: z.string(),
+  remediatedStagedSql: z.string().optional(),
+});
+export type MigrationReviewReport = z.infer<typeof MigrationReviewReportSchema>;
 
 export const ApprovalCheckpointSchema = z.object({
   sessionId: z.string(),
@@ -197,17 +315,42 @@ export const PersistedSessionStateSchema = z.object({
   status: SessionStatusSchema,
   currentStep: z.string(),
   schemaSnapshot: SchemaSnapshotSchema.optional(),
+  schemaAnalysis: SchemaAnalysisResultSchema.optional(),
   plan: MigrationPlanSchema.optional(),
+  riskAnalysis: RiskAnalysisResultSchema.optional(),
   riskReport: z.any().optional(),
   sandboxResult: SandboxValidationResultSchema.optional(),
+  sandboxOutput: SandboxValidationOutputSchema.optional(),
+  reviewReport: MigrationReviewReportSchema.optional(),
   approvalCheckpoint: ApprovalCheckpointSchema.optional(),
   approvalPacket: TrueForgeApprovalPacketSchema.optional(),
   applyResult: ApplyResultSchema.optional(),
   verificationResult: VerificationResultSchema.optional(),
-  timeline: z.array(AgentTimelineEventSchema),
+  timeline: z.array(AgentTimelineEventSchema).default([]),
+  activityEvents: z.array(AgentActivityEventSchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
   errorMessage: z.string().optional(),
 });
 export type PersistedSessionState = z.infer<typeof PersistedSessionStateSchema>;
 
+// HTTP API Request Schemas
+export const CreateSessionRequestSchema = z.object({
+  targetId: z.string().min(1).default("staging-demo"),
+  repo: z.string().min(1).default("mohitpargaie002-a11y/SchemaSentinel"),
+  migrationFilePath: z.string().min(1).default("migrations/0038_add_order_status.sql"),
+  userPrompt: z.string().optional(),
+  sessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).optional(),
+});
+export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
+
+export const ApproveSessionRequestSchema = z.object({
+  approvalToken: z.string().min(1),
+  approvedBy: z.string().min(1).default("lead-dba@schemasentinel.dev"),
+});
+export type ApproveSessionRequest = z.infer<typeof ApproveSessionRequestSchema>;
+
+export const RejectSessionRequestSchema = z.object({
+  approvedBy: z.string().optional().default("lead-dba@schemasentinel.dev"),
+});
+export type RejectSessionRequest = z.infer<typeof RejectSessionRequestSchema>;

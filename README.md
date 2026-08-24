@@ -10,9 +10,13 @@ Built for **The Agent Harness Hackathon 2026** (WeMakeDevs × TrueFoundry).
 
 ## 🌟 Key Capabilities
 
-- **TrueForge Harness Orchestration**: Orchestrates model calls, subagents, MCP tools, and human-in-the-loop checkpoints.
-- **Postgres & GitHub MCP**: Live schema introspection, diagnostic query execution, and automated PR review summaries.
-- **Isolated Sandbox Execution (`PGlite`)**: Ephemeral, zero-risk validation of candidate SQL with regression and rollback checks.
+- **Specialized Multi-Subagent Architecture**:
+  - `SchemaAnalystSubagent`: Read-only schema introspection via PostgreSQL MCP.
+  - `RiskAnalystSubagent`: Static locking and table rewrite hazard detection.
+  - `SandboxValidatorSubagent`: Ephemeral in-memory PGlite sandbox execution and rollback validation.
+  - `ReviewSynthesizerSubagent`: Evidence collation, structured reporting, and cryptographic checkpoint signing.
+  - `TrueForgeOrchestrator`: Multi-agent sequencing, typed event stream, session continuity, controlled apply, and post-apply invariant verification.
+- **Interactive Mission Control UI**: Real-time engineering dashboard with live subagent telemetry, quantitative risk matrix, staged plan, and human approval boundary.
 - **Cryptographic Approval Boundary**: Non-bypassable authorization gate binding `SHA256(sessionId + planId + targetId + sql)`.
 - **Quality & Governance via Qodo**: Continuous code review, test enforcement, and rule compliance with Qodo Agent Skills.
 
@@ -26,8 +30,8 @@ Built for **The Agent Harness Hackathon 2026** (WeMakeDevs × TrueFoundry).
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/<org>/schemasentinel.git
-cd schemasentinel
+git clone https://github.com/mohitpargaie002-a11y/SchemaSentinel.git
+cd SchemaSentinel
 npm install
 ```
 
@@ -41,9 +45,15 @@ cp .env.example .env
 npm test
 ```
 
-### 4. Run Day-1 Proof-of-Life Demo
+### 4. Launch Interactive Web UI
 ```bash
-npm run demo
+npm run serve
+```
+Open `http://localhost:3000` in your browser.
+
+### 5. Run Automated Proof CLI
+```bash
+npm run demo:day4
 ```
 
 ---
@@ -54,4 +64,4 @@ npm run demo
 - [DESIGN.md](file:///e:/F/Codex/Hackathon2/DESIGN.md) — Operations console design specification
 - [SECURITY.md](file:///e:/F/Codex/Hackathon2/SECURITY.md) — Threat model & security controls
 - [DEMO.md](file:///e:/F/Codex/Hackathon2/DEMO.md) — 3-minute golden demo walkthrough
-- [CONTRIBUTING.md](file:///e:/F/Codex/Hackathon2/CONTRIBUTING.md) — Developer guidelines & PR workflow
+- [HANDOFF.md](file:///e:/F/Codex/Hackathon2/HANDOFF.md) — Phase status and handoff notes
