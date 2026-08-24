@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { TrueForgeMigrationSession } from "../../lib/agent/session.js";
 import { defaultSessionStore } from "../../lib/agent/session-store.js";
 import { defaultPostgresMcpService } from "../../lib/mcp/postgres.js";
@@ -8,7 +8,7 @@ describe("StagingApply - Controlled Staging Apply & Resume Workflow", () => {
   const sessionRunner = new TrueForgeMigrationSession(defaultPostgresMcpService);
 
   it("executes full lifecycle: review → halt → persist → reload → resume → apply to staging-demo → verify → complete", async () => {
-    const sessionId = "sess_integration_staging_01";
+    const sessionId = `sess_integration_staging_${Date.now()}_01`;
     const userRequest = {
       sessionId,
       targetId: "staging-demo",
@@ -54,7 +54,7 @@ describe("StagingApply - Controlled Staging Apply & Resume Workflow", () => {
   });
 
   it("handles operator rejection: transitions to REJECTED with zero mutation applied", async () => {
-    const sessionId = "sess_integration_staging_reject_02";
+    const sessionId = `sess_integration_staging_reject_${Date.now()}_02`;
     const userRequest = {
       sessionId,
       targetId: "staging-demo",
@@ -68,10 +68,14 @@ describe("StagingApply - Controlled Staging Apply & Resume Workflow", () => {
     const rejectResult = await sessionRunner.resumeAndApplyWorkflow({
       sessionId,
       humanDecision: "REJECTED",
-      approvedBy: "security-team@schemasentinel.dev",
+      approvedBy: "security-auditor@schemasentinel.dev",
     });
 
+    expect(rejectResult.sessionState.sessionId).toBe(sessionId);
     expect(rejectResult.sessionState.status).toBe("REJECTED");
     expect(rejectResult.applyResult).toBeUndefined();
+
+    const timelineSteps = rejectResult.sessionState.timeline.map((t: AgentTimelineEvent) => t.step);
+    expect(timelineSteps).toContain("APPROVAL_REJECTED");
   });
 });

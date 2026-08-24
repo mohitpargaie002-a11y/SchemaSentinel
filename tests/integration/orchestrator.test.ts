@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { TrueForgeOrchestrator } from "../../lib/agent/orchestrator.js";
 import { defaultPostgresMcpService } from "../../lib/mcp/postgres.js";
-import { defaultGithubMcpService } from "../../lib/mcp/github.js";
+import { defaultGithubMcpService, IGithubMcpService } from "../../lib/mcp/github.js";
 import { defaultApprovalGate } from "../../lib/safety/approval-gate.js";
 import { FileSessionStore } from "../../lib/agent/session-store.js";
 import path from "path";
@@ -62,5 +62,33 @@ describe("Orchestrator - Multi-Agent Integration & Event Emission", () => {
     expect(resumeResult.applyResult?.success).toBe(true);
     expect(resumeResult.verificationResult?.status).toBe("passed");
     expect(resumeResult.sessionState.timeline.some((t) => t.step === "SESSION_COMPLETED")).toBe(true);
+  });
+
+  it("accurately identifies target tables in CREATE INDEX statements without defaulting to orders", async () => {
+    const tempDir = path.join(os.tmpdir(), `schemasentinel_orch_idx_${Date.now()}`);
+    const sessionStore = new FileSessionStore(tempDir);
+    const mockGithubMcp: IGithubMcpService = {
+      readMigrationFile: async () => `CREATE INDEX CONCURRENTLY idx_users_email ON public.users(email);`,
+      createPrComment: async () => ({ commentId: 1, htmlUrl: "https://github.com/mock/pr#1" }),
+    };
+
+    const orchestrator = new TrueForgeOrchestrator(
+      defaultPostgresMcpService,
+      mockGithubMcp,
+      defaultApprovalGate,
+      sessionStore
+    );
+
+    const sessionId = `sess_idx_${Date.now()}`;
+    const result = await orchestrator.executeReviewWorkflow({
+      sessionId,
+      targetId: "staging-demo",
+      repo: "mohitpargaie002-a11y/SchemaSentinel",
+      migrationFilePath: "migrations/0039_add_user_index.sql",
+      userPrompt: "Add user index",
+    });
+
+    expect(result.schemaAnalysis.affectedTables).toContain("users");
+    expect(result.reviewReport.migrationSummary).toContain("idx_users_email on users");
   });
 });

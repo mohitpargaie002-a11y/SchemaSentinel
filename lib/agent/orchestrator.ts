@@ -3,6 +3,7 @@ import { IPostgresMcpService, defaultPostgresMcpService } from "../mcp/postgres.
 import { IApprovalGate, defaultApprovalGate } from "../safety/approval-gate.js";
 import { ISessionStore, defaultSessionStore, PersistedSessionState } from "./session-store.js";
 import { IPostApplyVerifier, PostApplyVerifier } from "../safety/post-apply-verifier.js";
+import { TargetRegistry, defaultTargetRegistry } from "../safety/target-allowlist.js";
 import {
   ISchemaAnalystSubagent,
   SchemaAnalystSubagent,
@@ -53,6 +54,7 @@ export class TrueForgeOrchestrator {
   private githubMcp: IGithubMcpService;
   private approvalGate: IApprovalGate;
   private sessionStore: ISessionStore;
+  private targetRegistry: TargetRegistry;
   private verifier: IPostApplyVerifier;
 
   // Specialized Subagents
@@ -70,12 +72,14 @@ export class TrueForgeOrchestrator {
     riskAnalyst?: IRiskAnalystSubagent,
     sandboxValidator?: ISandboxValidatorSubagent,
     reviewSynthesizer?: IReviewSynthesizerSubagent,
-    verifier?: IPostApplyVerifier
+    verifier?: IPostApplyVerifier,
+    targetRegistry?: TargetRegistry
   ) {
     this.postgresMcp = postgresMcp;
     this.githubMcp = githubMcp;
     this.approvalGate = approvalGate;
     this.sessionStore = sessionStore;
+    this.targetRegistry = targetRegistry || defaultTargetRegistry;
     this.verifier = verifier || new PostApplyVerifier(postgresMcp);
 
     this.schemaAnalyst = schemaAnalyst || new SchemaAnalystSubagent(postgresMcp);
@@ -93,24 +97,44 @@ export class TrueForgeOrchestrator {
     rollbackSql: string;
   } {
     const tableSet = new Set<string>();
-    const tableMatches = rawSql.matchAll(/(?:ALTER|CREATE|DROP)\s+TABLE\s+(?:IF\s+(?:EXISTS|NOT\s+EXISTS)\s+)?([a-zA-Z0-9_"]+)/gi);
+
+    // 1. Parse table mutations (ALTER/CREATE/DROP TABLE) with schema-qualified support
+    const tableMatches = Array.from(
+      rawSql.matchAll(/(?:ALTER|CREATE|DROP)\s+TABLE\s+(?:IF\s+(?:EXISTS|NOT\s+EXISTS)\s+)?([a-zA-Z0-9_".]+)/gi)
+    );
     for (const m of tableMatches) {
-      tableSet.add(m[1].replace(/['"`]/g, "").toLowerCase());
+      const rawName = m[1].replace(/['"`]/g, "").trim();
+      const normalized = rawName.includes(".") ? rawName.split(".").pop()! : rawName;
+      if (normalized) {
+        tableSet.add(normalized.toLowerCase());
+      }
     }
 
-    const affectedTables = tableSet.size > 0 ? Array.from(tableSet) : ["orders"];
-
+    // 2. Parse column additions
     const addedColumns: string[] = [];
     const colMatches = Array.from(rawSql.matchAll(/ALTER\s+TABLE\s+([^\s;]+)\s+ADD\s+COLUMN\s+([^\s;]+)/gi));
     for (const m of colMatches) {
-      addedColumns.push(`${m[2]} to ${m[1]}`);
+      const rawTableName = m[1].replace(/['"`]/g, "").trim();
+      const rawColName = m[2].replace(/['"`]/g, "").trim();
+      const tableName = rawTableName.includes(".") ? rawTableName.split(".").pop()! : rawTableName;
+      tableSet.add(tableName.toLowerCase());
+      addedColumns.push(`${rawColName} to ${tableName}`);
     }
 
+    // 3. Parse index creations (including index ON table)
     const createdIndexes: string[] = [];
-    const idxMatches = Array.from(rawSql.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?([^\s;]+)\s+ON\s+([^\s;(]+)/gi));
+    const idxMatches = Array.from(
+      rawSql.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?([^\s;]+)\s+ON\s+([^\s;(]+)/gi)
+    );
     for (const m of idxMatches) {
-      createdIndexes.push(`${m[1]} on ${m[2]}`);
+      const rawIdxName = m[1].replace(/['"`]/g, "").trim();
+      const rawTableName = m[2].replace(/['"`]/g, "").trim();
+      const tableName = rawTableName.includes(".") ? rawTableName.split(".").pop()! : rawTableName;
+      tableSet.add(tableName.toLowerCase());
+      createdIndexes.push(`${rawIdxName} on ${tableName}`);
     }
+
+    const affectedTables = Array.from(tableSet);
 
     let summaryParts: string[] = [];
     if (addedColumns.length > 0) summaryParts.push(`Add column ${addedColumns.join(", ")}`);
@@ -120,10 +144,13 @@ export class TrueForgeOrchestrator {
 
     const rollbackStatements: string[] = [];
     for (const idx of idxMatches) {
-      rollbackStatements.unshift(`DROP INDEX IF EXISTS ${idx[1]};`);
+      const rawIdxName = idx[1].replace(/['"`]/g, "").trim();
+      rollbackStatements.unshift(`DROP INDEX IF EXISTS ${rawIdxName};`);
     }
     for (const col of colMatches) {
-      rollbackStatements.push(`ALTER TABLE ${col[1]} DROP COLUMN IF EXISTS ${col[2]};`);
+      const rawTableName = col[1].replace(/['"`]/g, "").trim();
+      const rawColName = col[2].replace(/['"`]/g, "").trim();
+      rollbackStatements.push(`ALTER TABLE ${rawTableName} DROP COLUMN IF EXISTS ${rawColName};`);
     }
     const rollbackSql = rollbackStatements.length > 0 ? rollbackStatements.join("\n") : "-- No rollback script needed.";
 
@@ -141,6 +168,12 @@ export class TrueForgeOrchestrator {
     migrationFilePath: string;
     userPrompt: string;
   }): Promise<OrchestrationResult> {
+    // Prevent overwriting an existing session
+    const existingSession = await this.sessionStore.loadSession(params.sessionId);
+    if (existingSession) {
+      throw new Error(`[Session Error]: Session '${params.sessionId}' already exists. Cannot overwrite an existing session.`);
+    }
+
     const timeline: AgentTimelineEvent[] = [];
     const activityEvents: AgentActivityEvent[] = [];
 
@@ -205,7 +238,7 @@ export class TrueForgeOrchestrator {
       rawSql: migrationContent,
       riskLevel: "HIGH",
       riskFactors: [],
-      affectedTables,
+      affectedTables: affectedTables.length > 0 ? affectedTables : ["orders"],
       rollbackSql,
       createdAt: new Date().toISOString(),
     };
@@ -217,7 +250,7 @@ export class TrueForgeOrchestrator {
     const schemaStart = Date.now();
     const { snapshot: schemaSnapshot, analysis: schemaAnalysis } = await this.schemaAnalyst.analyzeSchema(
       params.targetId,
-      affectedTables
+      plan.affectedTables
     );
     const schemaDuration = Date.now() - schemaStart;
     
@@ -269,13 +302,16 @@ export class TrueForgeOrchestrator {
       rollbackSuccessful: sandboxResult.rollbackSuccessful,
     }, sandboxDuration);
 
-    // 6. SUBAGENT 4: Review Synthesizer
+    // 6. SUBAGENT 4: Review Synthesizer (derive actual target environment)
+    const targetConfig = this.targetRegistry.getTarget(params.targetId);
+    const targetEnvironment = targetConfig ? targetConfig.environment : "staging";
+
     emitActivity("REVIEW_SYNTHESIZER", "RUNNING", "SYNTHESIS", `Synthesizing multi-agent evidence and generating TrueForge approval packet`);
     const { reviewReport, approvalPacket } = await this.reviewSynthesizer.synthesizeReview({
       sessionId: params.sessionId,
       plan,
       targetId: params.targetId,
-      targetEnvironment: "staging-demo",
+      targetEnvironment,
       migrationFilePath: params.migrationFilePath,
       migrationSummary,
       schemaAnalysis,

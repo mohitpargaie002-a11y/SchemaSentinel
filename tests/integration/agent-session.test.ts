@@ -6,7 +6,7 @@ describe("AgentSession - End-to-End Migration Review Vertical Slice", () => {
 
   it("executes complete review workflow and stops at TrueForge approval checkpoint", async () => {
     const userRequest = {
-      sessionId: "sess_integration_test_01",
+      sessionId: `sess_integration_test_${Date.now()}`,
       targetId: "demo-postgres",
       repo: "mohitpargaie002-a11y/SchemaSentinel",
       migrationFilePath: "migrations/0038_add_order_status.sql",

@@ -15,7 +15,7 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
 
   it("strictly blocks mutation on production target (prod-postgres)", async () => {
     const userRequest = {
-      sessionId: "sess_sec_prod_block_01",
+      sessionId: `sess_sec_prod_block_${Date.now()}_01`,
       targetId: "prod-postgres",
       repo: "mohitpargaie002-a11y/SchemaSentinel",
       migrationFilePath: "migrations/0038_add_order_status.sql",
@@ -37,7 +37,7 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
   });
 
   it("rejects token reuse (single-use token enforcement)", async () => {
-    const sessionId = "sess_sec_token_reuse_02";
+    const sessionId = `sess_sec_token_reuse_${Date.now()}_02`;
     const userRequest = {
       sessionId,
       targetId: "staging-demo",
@@ -71,7 +71,7 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
   it("retires approval token immediately even when DDL execution throws/fails", async () => {
     const brokenPlan: MigrationPlan = {
       id: "plan_fail_test",
-      sessionId: "sess_fail_test_01",
+      sessionId: `sess_fail_test_${Date.now()}`,
       targetId: "staging-demo",
       userPrompt: "Broken migration",
       rawSql: "ALTER TABLE non_existent_table_xyz ADD COLUMN bad_col INT;",
@@ -82,14 +82,14 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
     };
 
     const checkpoint = approvalGate.grantApproval(
-      "sess_fail_test_01",
+      brokenPlan.sessionId,
       brokenPlan,
       "operator@schemasentinel.dev"
     );
 
     const applyResult = await postgresMcp.applyMigration(
       "staging-demo",
-      "sess_fail_test_01",
+      brokenPlan.sessionId,
       "plan_fail_test",
       brokenPlan.rawSql,
       checkpoint.token,
@@ -103,7 +103,7 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
     expect(() =>
       approvalGate.verifyApproval(
         checkpoint.token,
-        "sess_fail_test_01",
+        brokenPlan.sessionId,
         "plan_fail_test",
         "staging-demo",
         brokenPlan.rawSql
@@ -112,7 +112,7 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
   });
 
   it("restores approval checkpoint when resuming in a fresh session runner instance", async () => {
-    const sessionId = "sess_fresh_restore_01";
+    const sessionId = `sess_fresh_restore_${Date.now()}_01`;
     const userRequest = {
       sessionId,
       targetId: "staging-demo",
@@ -147,7 +147,17 @@ describe("ControlledStaging - Security Controls & Target Allowlisting", () => {
     expect(resumeResult.applyResult?.success).toBe(true);
   });
 
-  it("rejects unauthorized / unallowlisted targets", () => {
-    expect(() => targetRegistry.getTarget("arbitrary-external-db.com")).toThrow(TargetNotAllowedError);
+  it("rejects unauthorized / unallowlisted targets", async () => {
+    const unallowlistedRequest = {
+      sessionId: `sess_unauthorized_${Date.now()}`,
+      targetId: "evil-foreign-database",
+      repo: "mohitpargaie002-a11y/SchemaSentinel",
+      migrationFilePath: "migrations/0038_add_order_status.sql",
+      userPrompt: "Review evil database.",
+    };
+
+    await expect(sessionRunner.executeReviewWorkflow(unallowlistedRequest)).rejects.toThrow(
+      TargetNotAllowedError
+    );
   });
 });

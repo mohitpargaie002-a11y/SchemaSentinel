@@ -158,6 +158,14 @@ export const RiskAnalysisResultSchema = z.object({
 });
 export type RiskAnalysisResult = z.infer<typeof RiskAnalysisResultSchema>;
 
+export const SmokeQueryResultSchema = z.object({
+  query: z.string(),
+  rowCount: z.number(),
+  success: z.boolean(),
+  errorMessage: z.string().optional(),
+});
+export type SmokeQueryResult = z.infer<typeof SmokeQueryResultSchema>;
+
 export const SandboxValidationResultSchema = z.object({
   planId: z.string(),
   success: z.boolean(),
@@ -167,6 +175,7 @@ export const SandboxValidationResultSchema = z.object({
   assertionsPassed: z.array(z.string()),
   assertionsFailed: z.array(z.string()),
   rollbackSuccessful: z.boolean(),
+  smokeQueryResults: z.array(SmokeQueryResultSchema).default([]),
 });
 export type SandboxValidationResult = z.infer<typeof SandboxValidationResultSchema>;
 
@@ -178,13 +187,7 @@ export const SandboxValidationOutputSchema = z.object({
   assertionsPassed: z.array(z.string()),
   assertionsFailed: z.array(z.string()),
   rollbackSuccessful: z.boolean(),
-  smokeQueryResults: z.array(
-    z.object({
-      query: z.string(),
-      rowCount: z.number(),
-      success: z.boolean(),
-    })
-  ),
+  smokeQueryResults: z.array(SmokeQueryResultSchema),
   errorMessage: z.string().optional(),
 });
 export type SandboxValidationOutput = z.infer<typeof SandboxValidationOutputSchema>;
@@ -330,3 +333,24 @@ export const PersistedSessionStateSchema = z.object({
   errorMessage: z.string().optional(),
 });
 export type PersistedSessionState = z.infer<typeof PersistedSessionStateSchema>;
+
+// HTTP API Request Schemas
+export const CreateSessionRequestSchema = z.object({
+  targetId: z.string().min(1).default("staging-demo"),
+  repo: z.string().min(1).default("mohitpargaie002-a11y/SchemaSentinel"),
+  migrationFilePath: z.string().min(1).default("migrations/0038_add_order_status.sql"),
+  userPrompt: z.string().optional(),
+  sessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).optional(),
+});
+export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
+
+export const ApproveSessionRequestSchema = z.object({
+  approvalToken: z.string().min(1),
+  approvedBy: z.string().min(1).default("lead-dba@schemasentinel.dev"),
+});
+export type ApproveSessionRequest = z.infer<typeof ApproveSessionRequestSchema>;
+
+export const RejectSessionRequestSchema = z.object({
+  approvedBy: z.string().optional().default("lead-dba@schemasentinel.dev"),
+});
+export type RejectSessionRequest = z.infer<typeof RejectSessionRequestSchema>;

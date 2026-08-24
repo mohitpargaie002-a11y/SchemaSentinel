@@ -3,20 +3,40 @@ import { SchemaAnalystSubagent } from "../../lib/agent/subagents/schema-analyst.
 import { RiskAnalystSubagent } from "../../lib/agent/subagents/risk-analyst.js";
 import { SandboxValidatorSubagent } from "../../lib/agent/subagents/sandbox-validator.js";
 import { ReviewSynthesizerSubagent } from "../../lib/agent/subagents/review-synthesizer.js";
-import { defaultPostgresMcpService } from "../../lib/mcp/postgres.js";
+import { defaultPostgresMcpService, IPostgresMcpService } from "../../lib/mcp/postgres.js";
 import { defaultApprovalGate } from "../../lib/safety/approval-gate.js";
 import { MigrationPlan } from "../../lib/domain/contracts.js";
 
 describe("Subagents - Unit Tests", () => {
-  it("SchemaAnalystSubagent performs read-only introspection without mutating target", async () => {
-    const analyst = new SchemaAnalystSubagent(defaultPostgresMcpService);
-    const { snapshot, analysis } = await analyst.analyzeSchema("demo-postgres", ["orders"]);
+  it("SchemaAnalystSubagent performs read-only introspection without mutating target and preserves 0 row estimates", async () => {
+    const mockPostgresMcp: IPostgresMcpService = {
+      inspectSchema: async () => ({
+        targetId: "demo-postgres",
+        timestamp: new Date().toISOString(),
+        tables: [
+          {
+            tableName: "empty_table",
+            columns: [{ name: "id", type: "integer", isNullable: false }],
+            primaryKeys: ["id"],
+            foreignKeys: [],
+            indexes: [],
+            estimatedRows: 0, // Explicitly 0
+          },
+        ],
+      }),
+      executeReadOnly: async () => [],
+      applyMigration: async () => {
+        throw new Error("applyMigration must not be called by SchemaAnalyst");
+      },
+    };
 
-    expect(snapshot.tables.length).toBeGreaterThan(0);
+    const analyst = new SchemaAnalystSubagent(mockPostgresMcp);
+    const { snapshot, analysis } = await analyst.analyzeSchema("demo-postgres", ["empty_table"]);
+
+    expect(snapshot.tables.length).toBe(1);
     expect(analysis.targetId).toBe("demo-postgres");
-    expect(analysis.affectedTables).toContain("orders");
-    expect(analysis.totalIndexCount).toBeGreaterThan(0);
-    expect(analysis.summary).toContain("Schema Analyst:");
+    expect(analysis.affectedTables).toContain("empty_table");
+    expect(analysis.volumeEstimates["empty_table"]).toBe(0); // Must be 0, NOT 100,000!
   });
 
   it("RiskAnalystSubagent detects NOT NULL column with DEFAULT hazard and locking risks", async () => {
@@ -32,7 +52,7 @@ describe("Subagents - Unit Tests", () => {
     expect(riskAnalysis.findings.some((f) => f.category === "LOCKING")).toBe(true);
   });
 
-  it("SandboxValidatorSubagent executes isolated PGlite validation and tests rollback", async () => {
+  it("SandboxValidatorSubagent executes isolated PGlite validation and tests rollback with real smoke query outcomes", async () => {
     const sandboxValidator = new SandboxValidatorSubagent();
     const rawSql = `ALTER TABLE orders ADD COLUMN test_col VARCHAR(50);`;
     const rollbackSql = `ALTER TABLE orders DROP COLUMN IF EXISTS test_col;`;
@@ -48,6 +68,8 @@ describe("Subagents - Unit Tests", () => {
     expect(sandboxOutput.assertionsPassed.length).toBeGreaterThan(0);
     expect(sandboxOutput.assertionsFailed.length).toBe(0);
     expect(sandboxOutput.smokeQueryResults.length).toBeGreaterThan(0);
+    expect(sandboxOutput.smokeQueryResults.every((r) => r.success)).toBe(true);
+    expect(sandboxOutput.smokeQueryResults[0].rowCount).toBeGreaterThanOrEqual(0);
   });
 
   it("ReviewSynthesizerSubagent synthesizes multi-agent evidence into a cryptographic approval packet", async () => {

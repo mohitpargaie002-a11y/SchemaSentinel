@@ -48,7 +48,7 @@ export class SchemaAnalystSubagent implements ISchemaAnalystSubagent {
 
     for (const table of snapshot.tables) {
       totalIndexCount += table.indexes.length;
-      volumeEstimates[table.tableName] = table.estimatedRows || 100000;
+      volumeEstimates[table.tableName] = table.estimatedRows ?? 0;
 
       for (const fk of table.foreignKeys) {
         foreignKeyDependencies.push({

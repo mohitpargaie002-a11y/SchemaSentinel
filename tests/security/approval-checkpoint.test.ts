@@ -10,7 +10,7 @@ describe("ApprovalCheckpoint - Hard Security Boundaries", () => {
 
   it("strictly halts at approval checkpoint without mutating target database", async () => {
     const userRequest = {
-      sessionId: "sess_security_test_01",
+      sessionId: `sess_security_test_${Date.now()}_01`,
       targetId: "demo-postgres",
       repo: "mohitpargaie002-a11y/SchemaSentinel",
       migrationFilePath: "migrations/0038_add_order_status.sql",
@@ -30,7 +30,7 @@ describe("ApprovalCheckpoint - Hard Security Boundaries", () => {
 
   it("rejects execution when SQL payload is tampered after approval packet creation", async () => {
     const userRequest = {
-      sessionId: "sess_security_test_02",
+      sessionId: `sess_security_test_${Date.now()}_02`,
       targetId: "demo-postgres",
       repo: "mohitpargaie002-a11y/SchemaSentinel",
       migrationFilePath: "migrations/0038_add_order_status.sql",

@@ -50,7 +50,7 @@ describe("Server API - HTTP Endpoints & Session Management", () => {
     expect(data.targets.some((t) => t.id === "staging-demo")).toBe(true);
   });
 
-  it("POST /api/sessions executes review and GET /api/sessions/:id returns persisted session", async () => {
+  it("POST /api/sessions executes review and GET /api/sessions/:id returns sanitized persisted session", async () => {
     const createRes = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -71,17 +71,62 @@ describe("Server API - HTTP Endpoints & Session Management", () => {
     expect(createData.status).toBe("AWAITING_APPROVAL");
     expect(createData.approvalPacket.approvalToken).toBeDefined();
 
-    // Verify GET /api/sessions/:id
+    // Verify GET /api/sessions/:id (token is sanitized)
     const getRes = await fetch(`${baseUrl}/api/sessions/${createData.sessionId}`);
-    const getData = (await getRes.json()) as { session: { sessionId: string; status: string } };
+    const getData = (await getRes.json()) as {
+      session: { sessionId: string; status: string; approvalPacket?: { approvalToken: string } };
+    };
     expect(getRes.status).toBe(200);
     expect(getData.session.sessionId).toBe(createData.sessionId);
     expect(getData.session.status).toBe("AWAITING_APPROVAL");
+    expect(getData.session.approvalPacket?.approvalToken).toContain("(REDACTED)");
 
     // Verify GET /api/sessions/:id/events
     const eventsRes = await fetch(`${baseUrl}/api/sessions/${createData.sessionId}/events`);
     const eventsData = (await eventsRes.json()) as { activityEvents: unknown[] };
     expect(eventsRes.status).toBe(200);
     expect(eventsData.activityEvents.length).toBeGreaterThan(0);
+  });
+
+  it("POST /api/sessions rejects duplicate session IDs with 409 Conflict", async () => {
+    const fixedSessionId = `test_conflict_${Date.now()}`;
+    const firstRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: fixedSessionId,
+        targetId: "staging-demo",
+        migrationFilePath: "migrations/0038_add_order_status.sql",
+      }),
+    });
+    expect(firstRes.status).toBe(201);
+
+    // Attempt to recreate with the exact same ID
+    const duplicateRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: fixedSessionId,
+        targetId: "staging-demo",
+        migrationFilePath: "migrations/0038_add_order_status.sql",
+      }),
+    });
+    expect(duplicateRes.status).toBe(409);
+    const errData = (await duplicateRes.json()) as { error: string };
+    expect(errData.error).toContain("already exists");
+  });
+
+  it("POST /api/sessions validates payload with Zod schema and rejects invalid input with 400", async () => {
+    const invalidRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "invalid/session/id!!", // violates regex
+        targetId: "", // empty string violates min(1)
+      }),
+    });
+    expect(invalidRes.status).toBe(400);
+    const errData = (await invalidRes.json()) as { error: string };
+    expect(errData.error).toBe("Invalid session request payload");
   });
 });

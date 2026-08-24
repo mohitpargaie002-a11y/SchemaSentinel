@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { SandboxValidationResult } from "../domain/contracts.js";
+import { SandboxValidationResult, SmokeQueryResult } from "../domain/contracts.js";
 
 export interface SandboxSeedConfig {
   initialSchemaSql: string;
@@ -30,6 +30,7 @@ export class PGliteSandboxRunner implements ISandboxRunner {
     const db = new PGlite();
     const assertionsPassed: string[] = [];
     const assertionsFailed: string[] = [];
+    const smokeQueryResults: SmokeQueryResult[] = [];
 
     try {
       // Step 1: Initialize baseline schema if provided
@@ -48,12 +49,30 @@ export class PGliteSandboxRunner implements ISandboxRunner {
       await db.exec(candidateSql);
       assertionsPassed.push("Candidate migration executed without syntax/constraint errors");
 
-      // Step 4: Run Representative Smoke Queries
+      // Step 4: Run Representative Smoke Queries & capture real outcomes
       if (seedConfig?.testQueries) {
         for (const query of seedConfig.testQueries) {
-          await db.query(query);
+          try {
+            const res = await db.query(query);
+            smokeQueryResults.push({
+              query,
+              rowCount: res.rows ? res.rows.length : 0,
+              success: true,
+            });
+          } catch (qErr: unknown) {
+            const msg = qErr instanceof Error ? qErr.message : String(qErr);
+            smokeQueryResults.push({
+              query,
+              rowCount: 0,
+              success: false,
+              errorMessage: msg,
+            });
+            assertionsFailed.push(`Smoke query failed: ${msg}`);
+          }
         }
-        assertionsPassed.push("Representative application queries executed successfully");
+        if (smokeQueryResults.every((r) => r.success)) {
+          assertionsPassed.push("Representative application queries executed successfully");
+        }
       }
 
       // Step 5: Test Rollback / Compensation SQL if provided
@@ -63,8 +82,9 @@ export class PGliteSandboxRunner implements ISandboxRunner {
           await db.exec(rollbackSql);
           rollbackSuccessful = true;
           assertionsPassed.push("Rollback SQL executed and validated cleanly");
-        } catch (rbErr: any) {
-          assertionsFailed.push(`Rollback execution failed: ${rbErr?.message || rbErr}`);
+        } catch (rbErr: unknown) {
+          const rbMsg = rbErr instanceof Error ? rbErr.message : String(rbErr);
+          assertionsFailed.push(`Rollback execution failed: ${rbMsg}`);
         }
       } else {
         rollbackSuccessful = true;
@@ -80,20 +100,23 @@ export class PGliteSandboxRunner implements ISandboxRunner {
         assertionsPassed,
         assertionsFailed,
         rollbackSuccessful,
+        smokeQueryResults,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       const executionDurationMs = Date.now() - startTime;
-      assertionsFailed.push(`Migration execution failure: ${err?.message || err}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      assertionsFailed.push(`Migration execution failure: ${errMsg}`);
 
       return {
         planId,
         success: false,
         executionDurationMs,
-        errorMessage: err?.message || String(err),
+        errorMessage: errMsg,
         schemaDiffSummary: "Sandbox execution failed during candidate migration.",
         assertionsPassed,
         assertionsFailed,
         rollbackSuccessful: false,
+        smokeQueryResults,
       };
     } finally {
       await db.close();

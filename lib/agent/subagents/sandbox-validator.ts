@@ -44,11 +44,7 @@ export class SandboxValidatorSubagent implements ISandboxValidatorSubagent {
       }
     );
 
-    const smokeQueryResults = SAMPLE_REPRESENTATIVE_QUERIES.map((q) => ({
-      query: q,
-      rowCount: 1,
-      success: sandboxResult.success,
-    }));
+    const smokeQueryResults = sandboxResult.smokeQueryResults || [];
 
     const sandboxOutput: SandboxValidationOutput = {
       planId,

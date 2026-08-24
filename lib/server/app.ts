@@ -2,14 +2,22 @@ import http from "http";
 import fs from "fs/promises";
 import path from "path";
 import { defaultOrchestrator, TrueForgeOrchestrator } from "../agent/orchestrator.js";
-import { defaultSessionStore, ISessionStore } from "../agent/session-store.js";
+import { defaultSessionStore, ISessionStore, PersistedSessionState } from "../agent/session-store.js";
 import { defaultTargetRegistry, TargetRegistry } from "../safety/target-allowlist.js";
+import {
+  ApproveSessionRequestSchema,
+  CreateSessionRequestSchema,
+  RejectSessionRequestSchema,
+} from "../domain/contracts.js";
+
+const MAX_BODY_SIZE = 1024 * 1024; // 1 MB defensive limit
 
 export interface CreateServerOptions {
   orchestrator?: TrueForgeOrchestrator;
   sessionStore?: ISessionStore;
   targetRegistry?: TargetRegistry;
   staticDir?: string;
+  allowedOrigins?: string[];
 }
 
 export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
@@ -21,12 +29,17 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
       : defaultOrchestrator);
   const targetRegistry = options.targetRegistry || defaultTargetRegistry;
   const staticDir = options.staticDir || path.resolve(process.cwd(), "public");
+  const allowedOrigins = options.allowedOrigins || ["http://localhost:3000", "http://127.0.0.1:3000"];
 
   const server = http.createServer(async (req, res) => {
-    // CORS headers for safety & local dev
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    const origin = req.headers.origin;
+    if (origin && (allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000");
+    }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -42,17 +55,35 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
       res.end(JSON.stringify(data));
     };
 
-    const sendError = (statusCode: number, message: string) => {
+    const sendError = (statusCode: number, message: string, details?: unknown) => {
       res.writeHead(statusCode, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: message, statusCode }));
+      res.end(JSON.stringify({ error: message, statusCode, details }));
     };
 
     const parseJsonBody = async (): Promise<Record<string, unknown>> => {
       return new Promise((resolve, reject) => {
+        const contentLength = req.headers["content-length"];
+        if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+          const err = new Error("Payload Too Large");
+          (err as unknown as { statusCode: number }).statusCode = 413;
+          req.destroy();
+          return reject(err);
+        }
+
         let body = "";
-        req.on("data", (chunk) => {
+        let receivedBytes = 0;
+
+        req.on("data", (chunk: Buffer | string) => {
+          receivedBytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+          if (receivedBytes > MAX_BODY_SIZE) {
+            const err = new Error("Payload Too Large");
+            (err as unknown as { statusCode: number }).statusCode = 413;
+            req.destroy();
+            return reject(err);
+          }
           body += chunk;
         });
+
         req.on("end", () => {
           if (!body.trim()) {
             resolve({});
@@ -61,11 +92,38 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
           try {
             resolve(JSON.parse(body));
           } catch (e) {
-            reject(new Error("Invalid JSON body"));
+            const err = new Error("Invalid JSON body");
+            (err as unknown as { statusCode: number }).statusCode = 400;
+            reject(err);
           }
         });
+
         req.on("error", reject);
       });
+    };
+
+    /**
+     * Sanitizes sensitive secrets before returning session data to API callers.
+     */
+    const sanitizeSessionState = (s: PersistedSessionState): Record<string, unknown> => {
+      const sanitized = { ...s };
+      if (sanitized.approvalPacket) {
+        sanitized.approvalPacket = {
+          ...sanitized.approvalPacket,
+          approvalToken: sanitized.approvalPacket.approvalToken
+            ? `sat_...${sanitized.approvalPacket.approvalToken.slice(-6)} (REDACTED)`
+            : "",
+        };
+      }
+      if (sanitized.approvalCheckpoint) {
+        sanitized.approvalCheckpoint = {
+          ...sanitized.approvalCheckpoint,
+          token: sanitized.approvalCheckpoint.token
+            ? `sat_...${sanitized.approvalCheckpoint.token.slice(-6)} (REDACTED)`
+            : "",
+        };
+      }
+      return sanitized;
     };
 
     try {
@@ -92,7 +150,7 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         return sendJson(200, { targets });
       }
 
-      // 3. List Sessions API
+      // 3. List Sessions API (Sanitizes tokens)
       if (req.method === "GET" && pathname === "/api/sessions") {
         const sessionIds = await sessionStore.listSessions();
         const summaries = [];
@@ -113,21 +171,29 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         return sendJson(200, { sessions: summaries });
       }
 
-      // 4. Create Session API (Triggers Migration Review)
+      // 4. Create Session API (Zod Boundary Validation & Conflict Check)
       if (req.method === "POST" && pathname === "/api/sessions") {
-        const body = await parseJsonBody();
-        const targetId = typeof body.targetId === "string" ? body.targetId : "staging-demo";
-        const repo = typeof body.repo === "string" ? body.repo : "mohitpargaie002-a11y/SchemaSentinel";
-        const migrationFilePath = typeof body.migrationFilePath === "string" ? body.migrationFilePath : "migrations/0038_add_order_status.sql";
-        const userPrompt = typeof body.userPrompt === "string" ? body.userPrompt : `Review migration ${migrationFilePath}`;
-        const sessionId = typeof body.sessionId === "string" && body.sessionId ? body.sessionId : `sess_${Date.now()}`;
+        const rawBody = await parseJsonBody();
+        const parseResult = CreateSessionRequestSchema.safeParse(rawBody);
+        if (!parseResult.success) {
+          return sendError(400, "Invalid session request payload", parseResult.error.format());
+        }
+
+        const { targetId, repo, migrationFilePath, userPrompt, sessionId: requestedSessionId } = parseResult.data;
+        const sessionId = requestedSessionId || `sess_${Date.now()}`;
+
+        // Check for session collision (Prevent overwriting existing session)
+        const existing = await sessionStore.loadSession(sessionId);
+        if (existing) {
+          return sendError(409, `Session '${sessionId}' already exists. Overwrite rejected.`);
+        }
 
         const result = await orchestrator.executeReviewWorkflow({
           sessionId,
           targetId,
           repo,
           migrationFilePath,
-          userPrompt,
+          userPrompt: userPrompt || `Review migration ${migrationFilePath}`,
         });
 
         return sendJson(201, {
@@ -142,7 +208,7 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         });
       }
 
-      // 5. Get Single Session API
+      // 5. Get Single Session API (Sanitizes tokens)
       const singleSessionMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)$/);
       if (req.method === "GET" && singleSessionMatch) {
         const sessionId = singleSessionMatch[1];
@@ -150,7 +216,7 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         if (!session) {
           return sendError(404, `Session '${sessionId}' not found`);
         }
-        return sendJson(200, { session });
+        return sendJson(200, { session: sanitizeSessionState(session) });
       }
 
       // 6. Get Session Events API
@@ -169,13 +235,17 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         });
       }
 
-      // 7. Approve Session API
+      // 7. Approve Session API (Zod Boundary Validation & Authorization)
       const approveMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/approve$/);
       if (req.method === "POST" && approveMatch) {
         const sessionId = approveMatch[1];
-        const body = await parseJsonBody();
-        const approvalToken = typeof body.approvalToken === "string" ? body.approvalToken : undefined;
-        const approvedBy = typeof body.approvedBy === "string" ? body.approvedBy : "lead-dba@schemasentinel.dev";
+        const rawBody = await parseJsonBody();
+        const parseResult = ApproveSessionRequestSchema.safeParse(rawBody);
+        if (!parseResult.success) {
+          return sendError(400, "Invalid approval request payload", parseResult.error.format());
+        }
+
+        const { approvalToken, approvedBy } = parseResult.data;
 
         const resumeResult = await orchestrator.resumeAndApplyWorkflow({
           sessionId,
@@ -194,12 +264,17 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         });
       }
 
-      // 8. Reject Session API
+      // 8. Reject Session API (Zod Boundary Validation)
       const rejectMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/reject$/);
       if (req.method === "POST" && rejectMatch) {
         const sessionId = rejectMatch[1];
-        const body = await parseJsonBody();
-        const approvedBy = typeof body.approvedBy === "string" ? body.approvedBy : "operator@schemasentinel.dev";
+        const rawBody = await parseJsonBody();
+        const parseResult = RejectSessionRequestSchema.safeParse(rawBody);
+        if (!parseResult.success) {
+          return sendError(400, "Invalid rejection request payload", parseResult.error.format());
+        }
+
+        const { approvedBy } = parseResult.data;
 
         const rejectResult = await orchestrator.resumeAndApplyWorkflow({
           sessionId,
@@ -241,8 +316,9 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         return sendError(404, `File '${pathname}' not found`);
       }
     } catch (err: unknown) {
+      const statusCode = typeof (err as { statusCode?: number })?.statusCode === "number" ? (err as { statusCode: number }).statusCode : 500;
       const msg = err instanceof Error ? err.message : String(err);
-      return sendError(500, `Internal Server Error: ${msg}`);
+      return sendError(statusCode, msg);
     }
   });
 
