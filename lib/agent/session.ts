@@ -8,7 +8,14 @@ import { ISandboxRunner, defaultSandboxRunner } from "../sandbox/pglite-runner.j
 import { BASELINE_ECOMMERCE_SCHEMA, BASELINE_SEED_DATA, SAMPLE_REPRESENTATIVE_QUERIES } from "../sandbox/fixtures.js";
 import { IApprovalGate, defaultApprovalGate } from "../safety/approval-gate.js";
 import { IRiskAnalyzer, defaultRiskAnalyzer, ComprehensiveRiskReport } from "./risk-analyzer.js";
-import { MigrationPlan, SandboxValidationResult, SchemaSnapshot } from "../domain/contracts.js";
+import { ISessionStore, defaultSessionStore, PersistedSessionState } from "./session-store.js";
+import {
+  MigrationPlan,
+  SandboxValidationResult,
+  SchemaSnapshot,
+  ApplyResult,
+  VerificationResult,
+} from "../domain/contracts.js";
 
 export interface TrueForgeApprovalPacket {
   sessionId: string;
@@ -39,23 +46,26 @@ export class TrueForgeMigrationSession {
   private sandboxRunner: ISandboxRunner;
   private riskAnalyzer: IRiskAnalyzer;
   private approvalGate: IApprovalGate;
+  private sessionStore: ISessionStore;
 
   constructor(
     postgresMcp: IPostgresMcpService = defaultPostgresMcpService,
     githubMcp: IGithubMcpService = defaultGithubMcpService,
     sandboxRunner: ISandboxRunner = defaultSandboxRunner,
     riskAnalyzer: IRiskAnalyzer = defaultRiskAnalyzer,
-    approvalGate: IApprovalGate = defaultApprovalGate
+    approvalGate: IApprovalGate = defaultApprovalGate,
+    sessionStore: ISessionStore = defaultSessionStore
   ) {
     this.postgresMcp = postgresMcp;
     this.githubMcp = githubMcp;
     this.sandboxRunner = sandboxRunner;
     this.riskAnalyzer = riskAnalyzer;
     this.approvalGate = approvalGate;
+    this.sessionStore = sessionStore;
   }
 
   /**
-   * Helper to dynamically parse affected tables, created indexes/columns, and generate a reversible rollback script.
+   * Dynamically parses affected tables, created indexes/columns, and generates a reversible rollback script.
    */
   private parsePlanMetadata(rawSql: string, migrationFilePath: string): {
     affectedTables: string[];
@@ -112,7 +122,7 @@ export class TrueForgeMigrationSession {
 
   /**
    * Executes the full TrueForge migration review pipeline up to the Human Approval Checkpoint.
-   * STOPS AT THE APPROVAL POINT.
+   * Persists session state and STOPS AT THE APPROVAL POINT.
    */
   public async executeReviewWorkflow(params: {
     sessionId: string;
@@ -137,32 +147,32 @@ export class TrueForgeMigrationSession {
     };
 
     // STEP 1: Identify Request
-    recordEvent("IDENTIFY_REQUEST", "COMPLETED", `Identified request for target '${params.targetId}' and file '${params.migrationFilePath}'.`);
+    recordEvent("REQUEST_RECEIVED", "COMPLETED", `Received migration review request for target '${params.targetId}' and file '${params.migrationFilePath}'.`);
 
     // STEP 2: Read Migration via GitHub MCP
-    recordEvent("READ_MIGRATION", "STARTED", `Fetching migration file '${params.migrationFilePath}' from '${params.repo}' via GitHub MCP...`);
+    recordEvent("MIGRATION_READ", "STARTED", `Fetching migration file '${params.migrationFilePath}' from '${params.repo}' via GitHub MCP...`);
     const rawSql = await this.githubMcp.readMigrationFile(params.repo, params.migrationFilePath);
-    recordEvent("READ_MIGRATION", "COMPLETED", `Successfully retrieved migration payload (${rawSql.length} bytes).`);
+    recordEvent("MIGRATION_READ", "COMPLETED", `Successfully retrieved migration payload (${rawSql.length} bytes).`);
 
     // STEP 3: Inspect Database Schema via PostgreSQL MCP
-    recordEvent("INSPECT_SCHEMA", "STARTED", `Inspecting target PostgreSQL database '${params.targetId}' via Postgres MCP...`);
+    recordEvent("SCHEMA_INSPECTED", "STARTED", `Inspecting target PostgreSQL database '${params.targetId}' via Postgres MCP...`);
     const schemaSnapshot: SchemaSnapshot = await this.postgresMcp.inspectSchema(params.targetId);
     recordEvent(
-      "INSPECT_SCHEMA",
+      "SCHEMA_INSPECTED",
       "COMPLETED",
       `Schema snapshot completed: Discovered ${schemaSnapshot.tables.length} tables (${schemaSnapshot.tables.map((t) => t.tableName).join(", ")}).`
     );
 
     // STEP 4: Analyze Migration Risk & Locking Hazards
-    recordEvent("ANALYZE_MIGRATION", "STARTED", "Running SchemaSentinel safety analysis (locking, rewrites, constraints)...");
+    recordEvent("ANALYSIS_COMPLETED", "STARTED", "Running SchemaSentinel safety analysis (locking, rewrites, constraints)...");
     const riskReport = this.riskAnalyzer.analyzeRisk(rawSql, schemaSnapshot);
     recordEvent(
-      "ANALYZE_MIGRATION",
+      "ANALYSIS_COMPLETED",
       "COMPLETED",
       `Risk Analysis Complete: Overall Risk = ${riskReport.overallRisk}, Lock Risk = ${riskReport.lockRisk}, Findings = ${riskReport.findings.length}.`
     );
 
-    // STEP 5: Generate Candidate Migration Plan (Derived dynamically)
+    // STEP 5: Generate Candidate Migration Plan
     const planId = `plan_${Date.now()}`;
     const { affectedTables, migrationSummary, rollbackSql } = this.parsePlanMetadata(rawSql, params.migrationFilePath);
 
@@ -180,7 +190,7 @@ export class TrueForgeMigrationSession {
     };
 
     // STEP 6: Execute in Isolated TrueForge Sandbox (PGlite)
-    recordEvent("SANDBOX_EXECUTION", "STARTED", "Spinning up isolated PGlite PostgreSQL sandbox environment...");
+    recordEvent("SANDBOX_COMPLETED", "STARTED", "Spinning up isolated PGlite PostgreSQL sandbox environment...");
     const sandboxResult: SandboxValidationResult = await this.sandboxRunner.validateMigration(
       plan.id,
       plan.rawSql,
@@ -193,25 +203,20 @@ export class TrueForgeMigrationSession {
     );
 
     recordEvent(
-      "SANDBOX_EXECUTION",
+      "SANDBOX_COMPLETED",
       sandboxResult.success ? "COMPLETED" : "FAILED",
       `Sandbox validation ${sandboxResult.success ? "PASSED" : "FAILED"} in ${sandboxResult.executionDurationMs}ms (Rollback: ${sandboxResult.rollbackSuccessful ? "PASS" : "FAIL"}).`
     );
 
-    // STEP 7: Collated Risk Report
-    recordEvent("SYNTHESIZE_REPORT", "COMPLETED", "Collated risk matrix and sandbox assertion evidence.");
-
-    // STEP 8: Native TrueForge Human Approval Checkpoint
+    // STEP 7: Native TrueForge Human Approval Checkpoint
     recordEvent(
-      "HUMAN_APPROVAL_CHECKPOINT",
+      "APPROVAL_REQUESTED",
       "PAUSED_FOR_APPROVAL",
       "HALTING EXECUTION: Production database mutation blocked. Human approval checkpoint required."
     );
 
     // Generate signed approval token and fingerprint
     const checkpoint = this.approvalGate.grantApproval(params.sessionId, plan);
-
-    // Precise data integrity evaluation: all assertions must pass without failure
     const dataIntegrityPassed = sandboxResult.success && sandboxResult.assertionsFailed.length === 0 && sandboxResult.assertionsPassed.length > 0;
 
     const approvalPacket: TrueForgeApprovalPacket = {
@@ -249,10 +254,135 @@ export class TrueForgeMigrationSession {
       timeline,
     };
 
+    // STEP 8: Persist Session State
+    await this.sessionStore.saveSession({
+      sessionId: params.sessionId,
+      targetId: params.targetId,
+      repo: params.repo,
+      migrationFilePath: params.migrationFilePath,
+      userPrompt: params.userPrompt,
+      status: "AWAITING_APPROVAL",
+      currentStep: "APPROVAL_REQUESTED",
+      schemaSnapshot,
+      plan,
+      riskReport,
+      sandboxResult,
+      approvalCheckpoint: checkpoint,
+      approvalPacket,
+      timeline,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
     return {
       context,
       riskReport,
       approvalPacket,
+    };
+  }
+
+  /**
+   * Resumes the SAME logical TrueForge session after human decision.
+   * If APPROVED, applies migration to allowlisted staging target and verifies invariants.
+   * If REJECTED, transitions to REJECTED with zero mutation.
+   */
+  public async resumeAndApplyWorkflow(params: {
+    sessionId: string;
+    humanDecision: "APPROVED" | "REJECTED";
+    approvalToken?: string;
+    approvedBy?: string;
+  }): Promise<{
+    sessionState: PersistedSessionState;
+    applyResult?: ApplyResult;
+    verificationResult?: VerificationResult;
+  }> {
+    // 1. Reconstruct logical session from persistent store
+    const session = await this.sessionStore.loadSession(params.sessionId);
+    if (!session) {
+      throw new Error(`[Session Error]: Session '${params.sessionId}' not found in persistent store.`);
+    }
+
+    if (session.status !== "AWAITING_APPROVAL") {
+      throw new Error(`[Session Error]: Session '${params.sessionId}' is in state '${session.status}' and cannot be resumed.`);
+    }
+
+    const recordEvent = (step: string, status: AgentTimelineEvent["status"], details: string) => {
+      session.timeline.push({
+        timestamp: new Date().toISOString(),
+        step,
+        status,
+        details,
+      });
+    };
+
+    // 2. Handle Rejection Flow
+    if (params.humanDecision === "REJECTED") {
+      recordEvent("APPROVAL_REJECTED", "COMPLETED", `Operator '${params.approvedBy || "operator"}' rejected migration plan '${session.plan?.id}'. Zero mutation applied.`);
+      session.status = "REJECTED";
+      session.currentStep = "APPROVAL_REJECTED";
+      await this.sessionStore.saveSession(session);
+      return { sessionState: session };
+    }
+
+    // 3. Handle Approval Flow
+    if (!params.approvalToken) {
+      throw new Error("[Approval Error]: Missing required approval token for approved migration.");
+    }
+
+    recordEvent("APPROVED", "COMPLETED", `Human operator '${params.approvedBy || "operator@schemasentinel.dev"}' granted approval.`);
+    session.status = "APPLYING";
+
+    // 4. Staging Apply Step
+    recordEvent("STAGING_APPLY_STARTED", "STARTED", `Applying approved migration plan '${session.plan?.id}' to target '${session.targetId}'...`);
+    
+    let applyResult: ApplyResult;
+    try {
+      applyResult = await this.postgresMcp.applyMigration(
+        session.targetId,
+        session.sessionId,
+        session.plan!.id,
+        session.plan!.rawSql,
+        params.approvalToken
+      );
+    } catch (err: any) {
+      recordEvent("APPLY_BLOCKED", "FAILED", `Apply blocked by safety boundary: ${err.message}`);
+      session.status = "FAILED";
+      session.currentStep = "APPLY_BLOCKED";
+      session.errorMessage = err.message;
+      await this.sessionStore.saveSession(session);
+      throw err;
+    }
+
+    session.applyResult = applyResult;
+    recordEvent("STAGING_APPLY_COMPLETED", applyResult.success ? "COMPLETED" : "FAILED", `DDL execution finished with status '${applyResult.status}'.`);
+
+    // 5. Post-Apply Verification Step
+    if (applyResult.verificationResult) {
+      session.verificationResult = applyResult.verificationResult;
+      recordEvent("VERIFICATION_STARTED", "STARTED", "Running deterministic post-apply verification queries...");
+
+      if (applyResult.verificationResult.status === "passed") {
+        recordEvent("VERIFICATION_COMPLETED", "COMPLETED", `All ${applyResult.verificationResult.checks.length} post-apply checks PASSED.`);
+        recordEvent("SESSION_COMPLETED", "COMPLETED", `Session '${session.sessionId}' successfully completed.`);
+        session.status = "COMPLETED";
+        session.currentStep = "SESSION_COMPLETED";
+      } else {
+        recordEvent("VERIFICATION_FAILED", "FAILED", `Post-apply verification failed: ${applyResult.verificationResult.failures.join("; ")}`);
+        session.status = "FAILED";
+        session.currentStep = "VERIFICATION_FAILED";
+        session.errorMessage = "Post-apply verification failed.";
+      }
+    } else {
+      session.status = applyResult.success ? "COMPLETED" : "FAILED";
+    }
+
+    // 6. Persist Final State
+    await this.sessionStore.saveSession(session);
+
+    return {
+      sessionState: session,
+      applyResult,
+      verificationResult: session.verificationResult,
     };
   }
 }
