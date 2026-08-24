@@ -345,7 +345,7 @@ export const CreateSessionRequestSchema = z.object({
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
 
 export const ApproveSessionRequestSchema = z.object({
-  approvalToken: z.string().min(1),
+  approvalToken: z.string().optional(),
   approvedBy: z.string().min(1).default("lead-dba@schemasentinel.dev"),
 });
 export type ApproveSessionRequest = z.infer<typeof ApproveSessionRequestSchema>;
