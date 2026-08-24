@@ -1,4 +1,6 @@
-export class SqlGuardViolationError extends Error {
+import { SentinelError } from "../domain/contracts.js";
+
+export class SqlGuardViolationError extends SentinelError {
   constructor(message: string) {
     super(`[SqlGuard Violation]: ${message}`);
     this.name = "SqlGuardViolationError";

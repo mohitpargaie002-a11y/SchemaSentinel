@@ -26,7 +26,7 @@ async function main() {
   const result = await session.executeReviewWorkflow(userRequest);
 
   console.log("📜 AGENT EXECUTION TIMELINE (TrueForge Harness):");
-  result.context.timeline.forEach((t) => {
+  result.context.timeline.forEach((t: { status: string; step: string; details: string }) => {
     const icon = t.status === "COMPLETED" ? "✓" : t.status === "STARTED" ? "●" : "🔒";
     console.log(`  ${icon} [${t.step}] (${t.status}): ${t.details}`);
   });

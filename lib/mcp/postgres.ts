@@ -15,7 +15,8 @@ export interface IPostgresMcpService {
     planId: string,
     rawSql: string,
     approvalToken: string,
-    plan?: MigrationPlan
+    plan?: MigrationPlan,
+    onBeforeVerification?: () => void | Promise<void>
   ): Promise<ApplyResult>;
 }
 
@@ -159,7 +160,8 @@ export class PostgresMcpService implements IPostgresMcpService {
     planId: string,
     rawSql: string,
     approvalToken: string,
-    plan?: MigrationPlan
+    plan?: MigrationPlan,
+    onBeforeVerification?: () => void | Promise<void>
   ): Promise<ApplyResult> {
     const startTime = Date.now();
     const auditLog: string[] = [];
@@ -222,6 +224,9 @@ export class PostgresMcpService implements IPostgresMcpService {
 
     // Step 7: Deterministic Post-Apply Verification using real Plan or derived affected tables
     auditLog.push("[VERIFYING]: Running post-apply invariant checks...");
+    if (onBeforeVerification) {
+      await onBeforeVerification();
+    }
     
     let verificationPlan = plan;
     if (!verificationPlan) {

@@ -22,10 +22,10 @@ async function main() {
   console.log("[Step 2] Running Autonomous Pre-Approval Pipeline (Inspect + Sandbox + Risk)...");
   context = await harness.runPreApprovalPipeline(context);
 
-  console.log(`✓ Schema Tables Discovered: ${context.schemaSnapshot?.tables.map(t => t.tableName).join(", ")}`);
+  console.log(`✓ Schema Tables Discovered: ${context.schemaSnapshot?.tables.map((t: { tableName: string }) => t.tableName).join(", ")}`);
   console.log(`✓ Risk Classification: ${context.plan?.riskLevel}`);
   console.log(`✓ Risk Factors:`);
-  context.plan?.riskFactors.forEach(f => console.log(`   - ${f}`));
+  context.plan?.riskFactors.forEach((f: string) => console.log(`   - ${f}`));
   console.log(`✓ Sandbox Validation Status: ${context.sandboxResult?.success ? "PASSED" : "FAILED"}`);
   console.log(`✓ Current Session Status: ${context.status} (HALTED AT APPROVAL CHECKPOINT)\n`);
 
@@ -81,7 +81,7 @@ async function main() {
   console.log(`✓ Apply Execution Duration: ${context.applyResult?.executionDurationMs}ms`);
   console.log(`✓ Verification Passed: ${context.applyResult?.verificationPassed}`);
   console.log(`✓ Audit Trail:`);
-  context.applyResult?.auditLog.forEach(log => console.log(`   ${log}`));
+  context.applyResult?.auditLog.forEach((log: string) => console.log(`   ${log}`));
 
   console.log("\n================================================================");
   console.log("🎉 Day 1 Proof-of-Life Successful: All Invariants & Gates Verified!");

@@ -10,13 +10,21 @@ Built for **The Agent Harness Hackathon 2026** (WeMakeDevs × TrueFoundry).
 
 ## 🌟 Key Capabilities
 
+- **Live Agent Orchestration & Observability**:
+  - Real-time Server-Sent Events (SSE) stream (`/api/sessions/:id/events/stream`) with subagent telemetry and client reconnect replay.
+- **Evidence Provenance & Integrity**:
+  - Deterministic SHA-256 content hashing across all artifacts (`MIGRATION_FILE`, `POSTGRES_SCHEMA`, `RISK_ANALYSIS`, `SANDBOX_EXECUTION`, `VERIFICATION_QUERY`, `SYSTEM`).
+- **Session History & Switching**:
+  - Full persistence across reboots with read-only historical inspection and session resumption.
 - **Specialized Multi-Subagent Architecture**:
   - `SchemaAnalystSubagent`: Read-only schema introspection via PostgreSQL MCP.
   - `RiskAnalystSubagent`: Static locking and table rewrite hazard detection.
   - `SandboxValidatorSubagent`: Ephemeral in-memory PGlite sandbox execution and rollback validation.
-  - `ReviewSynthesizerSubagent`: Evidence collation, structured reporting, and cryptographic checkpoint signing.
-  - `TrueForgeOrchestrator`: Multi-agent sequencing, typed event stream, session continuity, controlled apply, and post-apply invariant verification.
-- **Interactive Mission Control UI**: Real-time engineering dashboard with live subagent telemetry, quantitative risk matrix, staged plan, and human approval boundary.
+  - `ReviewSynthesizerSubagent`: Evidence provenance collation, structured reporting, and cryptographic checkpoint signing.
+  - `TrueForgeOrchestrator`: Parallel read-only stage execution, typed event stream, session continuity, controlled apply, and post-apply invariant verification.
+- **Formal Session State Machine**:
+  - Strict lifecycle transitions (`CREATED` → `RUNNING` → `REVIEW_READY` → `AWAITING_APPROVAL` → `APPROVED` → `APPLYING` → `VERIFYING` → `COMPLETED`) with fail-closed security.
+- **Interactive "Ink & Paper" Web UI**: Real-time engineering dashboard with live subagent telemetry, quantitative risk matrix, staged plan, evidence provenance explorer, and human approval boundary.
 - **Cryptographic Approval Boundary**: Non-bypassable authorization gate binding `SHA256(sessionId + planId + targetId + sql)`.
 - **Quality & Governance via Qodo**: Continuous code review, test enforcement, and rule compliance with Qodo Agent Skills.
 
@@ -53,7 +61,7 @@ Open `http://localhost:3000` in your browser.
 
 ### 5. Run Automated Proof CLI
 ```bash
-npm run demo:day4
+npm run demo:day5
 ```
 
 ---

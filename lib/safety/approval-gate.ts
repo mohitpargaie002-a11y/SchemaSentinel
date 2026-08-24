@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
-import { ApprovalCheckpoint, MigrationPlan } from "../domain/contracts.js";
+import { ApprovalCheckpoint, MigrationPlan, SentinelError } from "../domain/contracts.js";
 
-export class ApprovalGateError extends Error {
+export class ApprovalGateError extends SentinelError {
   constructor(message: string) {
     super(`[ApprovalGate Security Error]: ${message}`);
     this.name = "ApprovalGateError";
