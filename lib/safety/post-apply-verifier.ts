@@ -9,6 +9,20 @@ export interface IPostApplyVerifier {
   ): Promise<VerificationResult>;
 }
 
+function normalizePostgresType(type: string): string {
+  const t = type.toLowerCase().trim();
+  if (t.startsWith("varchar") || t.startsWith("character varying")) return "varchar";
+  if (t.startsWith("int8") || t.startsWith("bigint")) return "bigint";
+  if (t.startsWith("int4") || t.startsWith("integer") || t === "int") return "integer";
+  if (t.startsWith("int2") || t.startsWith("smallint")) return "smallint";
+  if (t.startsWith("bool")) return "boolean";
+  if (t.startsWith("text")) return "text";
+  if (t.startsWith("timestamp")) return "timestamp";
+  if (t.startsWith("jsonb")) return "jsonb";
+  if (t.startsWith("json")) return "json";
+  return t.replace(/\([^)]*\)/g, "").trim();
+}
+
 export class PostApplyVerifier implements IPostApplyVerifier {
   private postgresMcp: IPostgresMcpService;
 
@@ -37,8 +51,17 @@ export class PostApplyVerifier implements IPostApplyVerifier {
         details: `Successfully introspected ${postSnapshot.tables.length} tables in target catalog '${targetId}'.`,
       });
 
-      // Check 2: Verify Affected Tables Exist
+      // Check 2: Verify Affected Tables Exist (unless explicitly dropped in SQL)
+      const explicitlyDroppedTables = new Set<string>();
+      const dropMatches = plan.rawSql.matchAll(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_"]+)/gi);
+      for (const dm of dropMatches) {
+        explicitlyDroppedTables.add(dm[1].replace(/['"`]/g, "").toLowerCase());
+      }
+
       for (const tableName of plan.affectedTables) {
+        if (explicitlyDroppedTables.has(tableName.toLowerCase())) {
+          continue;
+        }
         const table = postSnapshot.tables.find((t) => t.tableName.toLowerCase() === tableName.toLowerCase());
         if (table) {
           checks.push({
@@ -57,23 +80,17 @@ export class PostApplyVerifier implements IPostApplyVerifier {
         }
       }
 
-      // Check 3: Verify Column Additions (if ADD COLUMN in rawSql)
+      // Check 3: Verify Column Additions and Data Types (if ADD COLUMN in rawSql)
       const addColumnMatches = plan.rawSql.matchAll(/ALTER\s+TABLE\s+([^\s;]+)\s+ADD\s+COLUMN\s+([^\s;]+)\s+([^\s;]+)/gi);
       for (const match of addColumnMatches) {
         const tableName = match[1].replace(/['"`]/g, "").toLowerCase();
         const colName = match[2].replace(/['"`]/g, "").toLowerCase();
-        const expectedType = match[3].replace(/['"`]/g, "").toLowerCase();
+        const rawExpectedType = match[3].replace(/['"`]/g, "").toLowerCase();
 
         const table = postSnapshot.tables.find((t) => t.tableName.toLowerCase() === tableName);
         const column = table?.columns.find((c) => c.name.toLowerCase() === colName);
 
-        if (column) {
-          checks.push({
-            name: `COLUMN_STRUCTURE_${tableName}_${colName}`,
-            passed: true,
-            details: `Column '${colName}' found on '${tableName}' with type '${column.type}'.`,
-          });
-        } else {
+        if (!column) {
           const failMsg = `Expected column '${colName}' was NOT found on '${tableName}'.`;
           failures.push(failMsg);
           checks.push({
@@ -81,6 +98,24 @@ export class PostApplyVerifier implements IPostApplyVerifier {
             passed: false,
             details: failMsg,
           });
+        } else {
+          const expectedNorm = normalizePostgresType(rawExpectedType);
+          const liveNorm = normalizePostgresType(column.type);
+          if (expectedNorm !== liveNorm) {
+            const failMsg = `Column '${colName}' on '${tableName}' has mismatched datatype: expected '${rawExpectedType}' (norm: ${expectedNorm}), found '${column.type}' (norm: ${liveNorm}).`;
+            failures.push(failMsg);
+            checks.push({
+              name: `COLUMN_STRUCTURE_${tableName}_${colName}`,
+              passed: false,
+              details: failMsg,
+            });
+          } else {
+            checks.push({
+              name: `COLUMN_STRUCTURE_${tableName}_${colName}`,
+              passed: true,
+              details: `Column '${colName}' found on '${tableName}' with validated type '${column.type}'.`,
+            });
+          }
         }
       }
 
@@ -126,8 +161,9 @@ export class PostApplyVerifier implements IPostApplyVerifier {
             passed: true,
             details: `Query '${query}' executed successfully (${rows.length} rows returned).`,
           });
-        } catch (err: any) {
-          const failMsg = `Application smoke query '${query}' failed: ${err.message}`;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const failMsg = `Application smoke query '${query}' failed: ${msg}`;
           failures.push(failMsg);
           checks.push({
             name: `APPLICATION_SMOKE_QUERY_${i + 1}`,
@@ -142,15 +178,16 @@ export class PostApplyVerifier implements IPostApplyVerifier {
         const preTableNames = preSnapshot.tables.map((t) => t.tableName.toLowerCase());
         const postTableNames = postSnapshot.tables.map((t) => t.tableName.toLowerCase());
         const droppedTables = preTableNames.filter((t) => !postTableNames.includes(t));
+        const unexpectedDrops = droppedTables.filter((t) => !explicitlyDroppedTables.has(t));
 
-        if (droppedTables.length === 0 || plan.rawSql.toUpperCase().includes("DROP TABLE")) {
+        if (unexpectedDrops.length === 0) {
           checks.push({
             name: "UNEXPECTED_SCHEMA_MUTATION_CHECK",
             passed: true,
             details: "No unintended tables or objects were dropped during migration.",
           });
         } else {
-          const failMsg = `Unexpected table drops detected: ${droppedTables.join(", ")}`;
+          const failMsg = `Unexpected table drops detected: ${unexpectedDrops.join(", ")}`;
           failures.push(failMsg);
           checks.push({
             name: "UNEXPECTED_SCHEMA_MUTATION_CHECK",
@@ -160,8 +197,9 @@ export class PostApplyVerifier implements IPostApplyVerifier {
         }
       }
 
-    } catch (err: any) {
-      failures.push(`Verification engine encountered unexpected error: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failures.push(`Verification engine encountered unexpected error: ${msg}`);
     }
 
     const executionDurationMs = Date.now() - startTime;

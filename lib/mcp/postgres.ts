@@ -8,13 +8,14 @@ import { BASELINE_ECOMMERCE_SCHEMA, BASELINE_SEED_DATA } from "../sandbox/fixtur
 
 export interface IPostgresMcpService {
   inspectSchema(targetId: string): Promise<SchemaSnapshot>;
-  executeReadOnly(targetId: string, sql: string): Promise<any[]>;
+  executeReadOnly(targetId: string, sql: string): Promise<Record<string, unknown>[]>;
   applyMigration(
     targetId: string,
     sessionId: string,
     planId: string,
     rawSql: string,
-    approvalToken: string
+    approvalToken: string,
+    plan?: MigrationPlan
   ): Promise<ApplyResult>;
 }
 
@@ -36,6 +37,7 @@ export class PostgresMcpService implements IPostgresMcpService {
 
   /**
    * Helper to obtain or initialize a database connection for target.
+   * Capability-driven provisioning for baseline schema and audit catalog.
    */
   private async getDbForTarget(targetId: string): Promise<PGlite> {
     const target = this.targetRegistry.getTarget(targetId);
@@ -46,16 +48,19 @@ export class PostgresMcpService implements IPostgresMcpService {
       if (target.id === "demo-postgres" || target.id === "staging-demo") {
         await db.exec(BASELINE_ECOMMERCE_SCHEMA);
         await db.exec(BASELINE_SEED_DATA);
-        await db.exec(`
-          CREATE TABLE IF NOT EXISTS _schemasentinel_migrations (
-            id SERIAL PRIMARY KEY,
-            session_id VARCHAR(128) NOT NULL,
-            plan_id VARCHAR(128) NOT NULL,
-            migration_hash VARCHAR(64) NOT NULL,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-        `);
       }
+      
+      // Capability-driven audit table provisioning for all databases
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS _schemasentinel_migrations (
+          id SERIAL PRIMARY KEY,
+          session_id VARCHAR(128) NOT NULL,
+          plan_id VARCHAR(128) NOT NULL,
+          migration_hash VARCHAR(64) NOT NULL,
+          applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
       this.memoryDbs.set(target.id, db);
     }
     return db;
@@ -135,13 +140,13 @@ export class PostgresMcpService implements IPostgresMcpService {
    * MCP Tool: execute_readonly
    * Executes diagnostic queries with strict read-only AST verification.
    */
-  public async executeReadOnly(targetId: string, sql: string): Promise<any[]> {
+  public async executeReadOnly(targetId: string, sql: string): Promise<Record<string, unknown>[]> {
     this.targetRegistry.getTarget(targetId);
     assertReadOnlySql(sql);
 
     const db = await this.getDbForTarget(targetId);
     const result = await db.query(sql);
-    return result.rows;
+    return result.rows as Record<string, unknown>[];
   }
 
   /**
@@ -153,7 +158,8 @@ export class PostgresMcpService implements IPostgresMcpService {
     sessionId: string,
     planId: string,
     rawSql: string,
-    approvalToken: string
+    approvalToken: string,
+    plan?: MigrationPlan
   ): Promise<ApplyResult> {
     const startTime = Date.now();
     const auditLog: string[] = [];
@@ -172,17 +178,23 @@ export class PostgresMcpService implements IPostgresMcpService {
     );
     auditLog.push(`[APPROVAL VERIFIED]: Token ${approvalToken.substring(0, 12)}... cryptographically validated.`);
 
-    // Step 3: Capture Pre-migration Schema Snapshot for Invariant Diffing
+    // Step 3: Consume & Retire Single-Use Approval Token immediately upon authorization
+    // Ensures replay protection even if subsequent DDL throws
+    this.approvalGate.revokeToken(approvalToken);
+    auditLog.push("[TOKEN RETIRED]: Single-use approval token consumed and retired.");
+
+    // Step 4: Capture Pre-migration Schema Snapshot for Invariant Diffing
     const preSnapshot = await this.inspectSchema(targetId);
 
-    // Step 4: Execute migration DDL against allowlisted target
+    // Step 5: Execute migration DDL against allowlisted target
     const db = await this.getDbForTarget(targetId);
     auditLog.push(`[APPLYING]: Executing migration DDL on '${targetId}'...`);
     
     try {
       await db.exec(rawSql);
       auditLog.push("[APPLIED]: DDL execution committed successfully.");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         planId,
         targetId,
@@ -191,37 +203,47 @@ export class PostgresMcpService implements IPostgresMcpService {
         appliedAt: new Date().toISOString(),
         executionDurationMs: Date.now() - startTime,
         auditLog,
-        errorMessage: `Database DDL execution failed: ${err.message}`,
+        errorMessage: `Database DDL execution failed: ${msg}`,
       };
     }
 
-    // Step 5: Consume & Retire Single-Use Approval Token
-    this.approvalGate.revokeToken(approvalToken);
-    auditLog.push("[TOKEN RETIRED]: Single-use approval token consumed and retired.");
-
-    // Step 6: Record Migration in Target Audit Table
+    // Step 6: Record Migration in Target Audit Table using safe Parameterized Query
     const migrationHash = this.approvalGate.computeFingerprint(sessionId, planId, targetId, rawSql);
-    await db.exec(`
-      INSERT INTO _schemasentinel_migrations (session_id, plan_id, migration_hash)
-      VALUES ('${sessionId}', '${planId}', '${migrationHash}');
-    `);
-    auditLog.push("[AUDIT RECORDED]: Migration hash recorded in target metadata catalog.");
+    try {
+      await db.query(
+        `INSERT INTO _schemasentinel_migrations (session_id, plan_id, migration_hash) VALUES ($1, $2, $3);`,
+        [sessionId, planId, migrationHash]
+      );
+      auditLog.push("[AUDIT RECORDED]: Migration hash recorded in target metadata catalog.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      auditLog.push(`[AUDIT WARNING]: Failed to record migration in catalog: ${msg}`);
+    }
 
-    // Step 7: Deterministic Post-Apply Verification
+    // Step 7: Deterministic Post-Apply Verification using real Plan or derived affected tables
     auditLog.push("[VERIFYING]: Running post-apply invariant checks...");
-    const dummyPlan: MigrationPlan = {
-      id: planId,
-      sessionId,
-      targetId,
-      userPrompt: "Post-apply verification",
-      rawSql,
-      riskLevel: "LOW",
-      riskFactors: [],
-      affectedTables: ["orders"],
-      createdAt: new Date().toISOString(),
-    };
+    
+    let verificationPlan = plan;
+    if (!verificationPlan) {
+      const tableMatches = new Set<string>();
+      const matches = rawSql.matchAll(/(?:ALTER|CREATE|DROP)\s+TABLE\s+(?:IF\s+(?:EXISTS|NOT\s+EXISTS)\s+)?([a-zA-Z0-9_"]+)/gi);
+      for (const m of matches) {
+        tableMatches.add(m[1].replace(/['"`]/g, "").toLowerCase());
+      }
+      verificationPlan = {
+        id: planId,
+        sessionId,
+        targetId,
+        userPrompt: "Post-apply verification",
+        rawSql,
+        riskLevel: "LOW",
+        riskFactors: [],
+        affectedTables: Array.from(tableMatches),
+        createdAt: new Date().toISOString(),
+      };
+    }
 
-    const verificationResult = await this.verifier.verify(targetId, dummyPlan, preSnapshot);
+    const verificationResult = await this.verifier.verify(targetId, verificationPlan, preSnapshot);
     const verificationPassed = verificationResult.status === "passed";
 
     auditLog.push(

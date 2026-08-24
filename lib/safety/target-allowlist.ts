@@ -16,12 +16,12 @@ export class TargetRegistry {
       id: "staging-demo",
       name: "SchemaSentinel Allowlisted Staging DB",
       environment: "staging-demo",
-      connectionString: process.env.TARGET_POSTGRES_URL || "postgresql://postgres:postgres@localhost:5432/schemasentinel_staging",
+      connectionString: process.env.TARGET_POSTGRES_URL || "postgresql://127.0.0.1:5432/schemasentinel_staging",
       isAllowed: true,
       mutable: true,
       allowedToApply: true,
       approvalRequired: true,
-      provider: "postgres",
+      provider: "pglite",
     });
 
     // 2. Demo target (Read-only inspection by default)
@@ -29,12 +29,12 @@ export class TargetRegistry {
       id: "demo-postgres",
       name: "SchemaSentinel Read-Only Demo DB",
       environment: "staging",
-      connectionString: process.env.TARGET_POSTGRES_URL || "postgresql://postgres:postgres@localhost:5432/schemasentinel_demo",
+      connectionString: process.env.DEMO_POSTGRES_URL || "postgresql://127.0.0.1:5432/schemasentinel_demo",
       isAllowed: true,
       mutable: false,
       allowedToApply: false,
       approvalRequired: true,
-      provider: "postgres",
+      provider: "pglite",
     });
 
     // 3. Ephemeral Sandbox DB
@@ -55,7 +55,7 @@ export class TargetRegistry {
       id: "prod-postgres",
       name: "Production PostgreSQL (LOCKED)",
       environment: "production",
-      connectionString: "postgresql://restricted:restricted@prod-db.internal:5432/production_core",
+      connectionString: process.env.PROD_POSTGRES_URL || "postgresql://prod-db.internal:5432/production_core",
       isAllowed: true,
       mutable: false,
       allowedToApply: false,

@@ -1,6 +1,7 @@
 import { TrueForgeMigrationSession } from "../lib/agent/session.js";
 import { defaultSessionStore } from "../lib/agent/session-store.js";
 import { defaultPostgresMcpService } from "../lib/mcp/postgres.js";
+import { AgentTimelineEvent } from "../lib/domain/contracts.js";
 
 async function main() {
   console.log("================================================================================");
@@ -50,7 +51,7 @@ async function main() {
 
   console.log("\n🔒 TRUEFORGE HUMAN APPROVAL CHECKPOINT REACHED:");
   console.log(`  Status              : ${reviewResult.approvalPacket.status}`);
-  console.log(`  Approval Token      : ${reviewResult.approvalPacket.approvalToken}`);
+  console.log(`  Approval Token      : sat_...${reviewResult.approvalPacket.approvalToken.slice(-6)} (REDACTED)`);
   console.log(`  SHA-256 Fingerprint : ${reviewResult.approvalPacket.sqlFingerprint}`);
   console.log("  🛑 Execution halted before database mutation.");
 
@@ -117,7 +118,7 @@ async function main() {
   console.log("\n================================================================================");
   console.log("🏁 FINAL COMPLETE AUDIT TIMELINE (End-to-End Governance)");
   console.log("================================================================================");
-  resumeResult.sessionState.timeline.forEach((event, idx) => {
+  resumeResult.sessionState.timeline.forEach((event: AgentTimelineEvent, idx: number) => {
     console.log(`  ${idx + 1}. [${event.step}] (${event.status}) at ${event.timestamp}`);
     console.log(`     Details: ${event.details}`);
   });
@@ -127,7 +128,8 @@ async function main() {
   console.log("================================================================================");
 }
 
-main().catch((err) => {
-  console.error("Day 3 Proof Execution Error:", err);
+main().catch((err: unknown) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error("Day 3 Proof Execution Error:", msg);
   process.exit(1);
 });

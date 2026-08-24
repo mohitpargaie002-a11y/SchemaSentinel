@@ -141,3 +141,73 @@ export const ApplyResultSchema = z.object({
   errorMessage: z.string().optional(),
 });
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;
+
+export const AgentTimelineEventSchema = z.object({
+  timestamp: z.string(),
+  step: z.string(),
+  status: z.enum(["STARTED", "COMPLETED", "PAUSED_FOR_APPROVAL", "FAILED"]),
+  details: z.string(),
+});
+export type AgentTimelineEvent = z.infer<typeof AgentTimelineEventSchema>;
+
+export const AgentContextSchema = z.object({
+  sessionId: z.string(),
+  targetId: z.string(),
+  status: SessionStatusSchema,
+  userPrompt: z.string(),
+  schemaSnapshot: SchemaSnapshotSchema.optional(),
+  plan: MigrationPlanSchema.optional(),
+  sandboxResult: SandboxValidationResultSchema.optional(),
+  approvalCheckpoint: ApprovalCheckpointSchema.optional(),
+  applyResult: ApplyResultSchema.optional(),
+  timeline: z.array(AgentTimelineEventSchema),
+});
+export type AgentContext = z.infer<typeof AgentContextSchema>;
+
+export const TrueForgeApprovalPacketSchema = z.object({
+  sessionId: z.string(),
+  planId: z.string(),
+  targetId: z.string(),
+  targetEnvironment: z.string(),
+  migrationFilename: z.string(),
+  migrationSummary: z.string(),
+  riskLevel: z.string(),
+  lockRisk: z.string(),
+  tableRewriteExpected: z.boolean(),
+  affectedObjects: z.array(z.string()),
+  sandboxStatus: z.enum(["PASS", "FAIL"]),
+  rollbackStatus: z.enum(["PASS", "FAIL"]),
+  dataIntegrityStatus: z.enum(["PASS", "FAIL"]),
+  candidateSql: z.string(),
+  remediatedStagedSql: z.string().optional(),
+  isModifiedFromOriginal: z.boolean(),
+  sqlFingerprint: z.string(),
+  approvalToken: z.string(),
+  status: z.literal("AWAITING_HUMAN_APPROVAL"),
+  irreversibleWarning: z.string(),
+});
+export type TrueForgeApprovalPacket = z.infer<typeof TrueForgeApprovalPacketSchema>;
+
+export const PersistedSessionStateSchema = z.object({
+  sessionId: z.string(),
+  targetId: z.string(),
+  repo: z.string(),
+  migrationFilePath: z.string(),
+  userPrompt: z.string(),
+  status: SessionStatusSchema,
+  currentStep: z.string(),
+  schemaSnapshot: SchemaSnapshotSchema.optional(),
+  plan: MigrationPlanSchema.optional(),
+  riskReport: z.any().optional(),
+  sandboxResult: SandboxValidationResultSchema.optional(),
+  approvalCheckpoint: ApprovalCheckpointSchema.optional(),
+  approvalPacket: TrueForgeApprovalPacketSchema.optional(),
+  applyResult: ApplyResultSchema.optional(),
+  verificationResult: VerificationResultSchema.optional(),
+  timeline: z.array(AgentTimelineEventSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  errorMessage: z.string().optional(),
+});
+export type PersistedSessionState = z.infer<typeof PersistedSessionStateSchema>;
+

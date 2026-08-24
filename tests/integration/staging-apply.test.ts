@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { TrueForgeMigrationSession } from "../../lib/agent/session.js";
 import { defaultSessionStore } from "../../lib/agent/session-store.js";
 import { defaultPostgresMcpService } from "../../lib/mcp/postgres.js";
+import { AgentTimelineEvent } from "../../lib/domain/contracts.js";
 
 describe("StagingApply - Controlled Staging Apply & Resume Workflow", () => {
   const sessionRunner = new TrueForgeMigrationSession(defaultPostgresMcpService);
@@ -42,7 +43,7 @@ describe("StagingApply - Controlled Staging Apply & Resume Workflow", () => {
     expect(resumeResult.verificationResult?.status).toBe("passed");
 
     // Verify timeline preserves complete history
-    const timelineSteps = resumeResult.sessionState.timeline.map((t) => t.step);
+    const timelineSteps = resumeResult.sessionState.timeline.map((t: AgentTimelineEvent) => t.step);
     expect(timelineSteps).toContain("REQUEST_RECEIVED");
     expect(timelineSteps).toContain("APPROVAL_REQUESTED");
     expect(timelineSteps).toContain("APPROVED");

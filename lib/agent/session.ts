@@ -15,30 +15,12 @@ import {
   SchemaSnapshot,
   ApplyResult,
   VerificationResult,
+  TrueForgeApprovalPacket,
+  TrueForgeApprovalPacketSchema,
 } from "../domain/contracts.js";
 
-export interface TrueForgeApprovalPacket {
-  sessionId: string;
-  planId: string;
-  targetId: string;
-  targetEnvironment: string;
-  migrationFilename: string;
-  migrationSummary: string;
-  riskLevel: string;
-  lockRisk: string;
-  tableRewriteExpected: boolean;
-  affectedObjects: string[];
-  sandboxStatus: "PASS" | "FAIL";
-  rollbackStatus: "PASS" | "FAIL";
-  dataIntegrityStatus: "PASS" | "FAIL";
-  candidateSql: string;
-  remediatedStagedSql?: string;
-  isModifiedFromOriginal: boolean;
-  sqlFingerprint: string;
-  approvalToken: string;
-  status: "AWAITING_HUMAN_APPROVAL";
-  irreversibleWarning: string;
-}
+export type { TrueForgeApprovalPacket };
+export { TrueForgeApprovalPacketSchema };
 
 export class TrueForgeMigrationSession {
   private postgresMcp: IPostgresMcpService;
@@ -306,6 +288,11 @@ export class TrueForgeMigrationSession {
       throw new Error(`[Session Error]: Session '${params.sessionId}' is in state '${session.status}' and cannot be resumed.`);
     }
 
+    // Restore approval checkpoint into approval gate if resuming in a fresh process
+    if (session.approvalCheckpoint) {
+      this.approvalGate.restoreCheckpoint(session.approvalCheckpoint);
+    }
+
     const recordEvent = (step: string, status: AgentTimelineEvent["status"], details: string) => {
       session.timeline.push({
         timestamp: new Date().toISOString(),
@@ -330,7 +317,11 @@ export class TrueForgeMigrationSession {
     }
 
     recordEvent("APPROVED", "COMPLETED", `Human operator '${params.approvedBy || "operator@schemasentinel.dev"}' granted approval.`);
+    
+    // Concurrency Lock: Atomically transition & persist status to APPLYING before external DDL execution
     session.status = "APPLYING";
+    session.currentStep = "APPLYING";
+    await this.sessionStore.saveSession(session);
 
     // 4. Staging Apply Step
     recordEvent("STAGING_APPLY_STARTED", "STARTED", `Applying approved migration plan '${session.plan?.id}' to target '${session.targetId}'...`);
@@ -342,13 +333,15 @@ export class TrueForgeMigrationSession {
         session.sessionId,
         session.plan!.id,
         session.plan!.rawSql,
-        params.approvalToken
+        params.approvalToken,
+        session.plan
       );
-    } catch (err: any) {
-      recordEvent("APPLY_BLOCKED", "FAILED", `Apply blocked by safety boundary: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      recordEvent("APPLY_BLOCKED", "FAILED", `Apply blocked by safety boundary: ${msg}`);
       session.status = "FAILED";
       session.currentStep = "APPLY_BLOCKED";
-      session.errorMessage = err.message;
+      session.errorMessage = msg;
       await this.sessionStore.saveSession(session);
       throw err;
     }
