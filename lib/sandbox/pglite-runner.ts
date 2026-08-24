@@ -7,7 +7,16 @@ export interface SandboxSeedConfig {
   testQueries?: string[];
 }
 
-export class PGliteSandboxRunner {
+export interface ISandboxRunner {
+  validateMigration(
+    planId: string,
+    candidateSql: string,
+    rollbackSql?: string,
+    seedConfig?: SandboxSeedConfig
+  ): Promise<SandboxValidationResult>;
+}
+
+export class PGliteSandboxRunner implements ISandboxRunner {
   /**
    * Runs candidate migration inside an ephemeral in-memory PGlite PostgreSQL database.
    */

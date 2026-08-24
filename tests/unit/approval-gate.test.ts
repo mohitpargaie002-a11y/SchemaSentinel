@@ -25,6 +25,13 @@ describe("ApprovalGate - Cryptographic Token & Tamper Defense", () => {
     );
   });
 
+  it("deterministically derives approval token from immutable session and SQL inputs", () => {
+    const checkpoint1 = gate.grantApproval("sess_456", plan, "admin@example.com");
+    const checkpoint2 = gate.grantApproval("sess_456", plan, "admin@example.com");
+    expect(checkpoint1.token).toBe(checkpoint2.token);
+    expect(checkpoint1.sqlFingerprint).toBe(checkpoint2.sqlFingerprint);
+  });
+
   it("verifies genuine approval token successfully", () => {
     const checkpoint = gate.grantApproval("sess_456", plan);
     const verified = gate.verifyApproval(

@@ -4,7 +4,19 @@ import { assertReadOnlySql } from "../safety/sql-guard.js";
 import { defaultTargetRegistry, TargetRegistry } from "../safety/target-allowlist.js";
 import { defaultApprovalGate, ApprovalGate } from "../safety/approval-gate.js";
 
-export class PostgresMcpService {
+export interface IPostgresMcpService {
+  inspectSchema(targetId: string): Promise<SchemaSnapshot>;
+  executeReadOnly(targetId: string, sql: string): Promise<any[]>;
+  applyMigration(
+    targetId: string,
+    sessionId: string,
+    planId: string,
+    rawSql: string,
+    approvalToken: string
+  ): Promise<ApplyResult>;
+}
+
+export class PostgresMcpService implements IPostgresMcpService {
   private targetRegistry: TargetRegistry;
   private approvalGate: ApprovalGate;
   private memoryDbs: Map<string, PGlite> = new Map();

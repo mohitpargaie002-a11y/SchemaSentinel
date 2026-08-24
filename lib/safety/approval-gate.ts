@@ -8,11 +8,34 @@ export class ApprovalGateError extends Error {
   }
 }
 
-export class ApprovalGate {
+export interface IApprovalGate {
+  computeFingerprint(
+    sessionId: string,
+    planId: string,
+    targetId: string,
+    rawSql: string
+  ): string;
+  grantApproval(
+    sessionId: string,
+    plan: MigrationPlan,
+    approvedBy?: string
+  ): ApprovalCheckpoint;
+  verifyApproval(
+    token: string,
+    sessionId: string,
+    planId: string,
+    targetId: string,
+    rawSql: string
+  ): ApprovalCheckpoint;
+  revokeToken(token: string): void;
+}
+
+export class ApprovalGate implements IApprovalGate {
   private approvedTokens: Map<string, ApprovalCheckpoint> = new Map();
 
   /**
-   * Computes the SHA-256 fingerprint for a migration payload.
+   * Computes the deterministic SHA-256 fingerprint for the exact migration payload.
+   * Bound to: SHA-256(sessionId + planId + targetId + exact_sql)
    */
   public computeFingerprint(
     sessionId: string,
@@ -20,12 +43,13 @@ export class ApprovalGate {
     targetId: string,
     rawSql: string
   ): string {
-    const payload = `${sessionId}:${planId}:${targetId}:${rawSql.trim()}`;
+    const payload = `${sessionId}:${planId}:${targetId}:${rawSql}`;
     return createHash("sha256").update(payload).digest("hex");
   }
 
   /**
    * Generates a signed approval checkpoint for a migration plan.
+   * Derives token deterministically from the cryptographic fingerprint.
    */
   public grantApproval(
     sessionId: string,
@@ -39,10 +63,7 @@ export class ApprovalGate {
       plan.rawSql
     );
 
-    const token = `sat_${createHash("sha256")
-      .update(`${fingerprint}:${Date.now()}:${Math.random()}`)
-      .digest("hex")
-      .substring(0, 32)}`;
+    const token = `sat_${fingerprint.substring(0, 32)}`;
 
     const checkpoint: ApprovalCheckpoint = {
       sessionId,
