@@ -1,14 +1,15 @@
-// SchemaSentinel — Frontend Client Controller
+// SchemaSentinel — Frontend Client Controller (Refined Design System)
 (function () {
   let currentSessionId = localStorage.getItem("schemasentinel_current_session") || null;
   let currentApprovalToken = null;
-  let pollInterval = null;
 
   // DOM Elements
   const form = document.getElementById("migration-form");
   const targetSelect = document.getElementById("target-select");
   const migrationFileInput = document.getElementById("migration-file");
   const btnStartReview = document.getElementById("btn-start-review");
+  const btnLabel = document.getElementById("btn-label");
+  const btnSpinner = document.getElementById("btn-spinner");
   const btnApprove = document.getElementById("btn-approve");
   const btnReject = document.getElementById("btn-reject");
   const announcer = document.getElementById("aria-live-announcer");
@@ -29,24 +30,32 @@
     }
   }
 
-  function setSubagentState(agentId, status, desc, metric1, metric2) {
-    const card = document.getElementById(`agent-${agentId}`);
-    const badge = document.getElementById(`status-${agentId}`);
-    const descEl = document.getElementById(`desc-${agentId}`);
-    const metricsEl = document.getElementById(`metrics-${agentId}`);
+  function setSubagentState(subagentKey, status, desc, metric1, metric2) {
+    const card = document.getElementById(`agent-${subagentKey}`);
+    const badge = document.getElementById(`status-${subagentKey}`);
+    const descEl = document.getElementById(`desc-${subagentKey}`);
+    const metricsEl = document.getElementById(`metrics-${subagentKey}`);
 
     if (card) {
-      card.className = `card subagent-card ${status.toLowerCase()}`;
+      card.className = `subagent-card ${status.toLowerCase()}`;
     }
     if (badge) {
-      badge.className = `agent-status-badge status-${status.toLowerCase()}`;
       badge.textContent = status;
+      badge.className = `badge ${
+        status === "RUNNING"
+          ? "badge-info"
+          : status === "COMPLETED"
+          ? "badge-safe"
+          : status === "FAILED"
+          ? "badge-danger"
+          : "badge-idle"
+      }`;
     }
     if (descEl && desc) {
       descEl.textContent = desc;
     }
     if (metricsEl && metric1 && metric2) {
-      metricsEl.innerHTML = `<span>${escapeHtml(metric1)}</span><span>${escapeHtml(metric2)}</span>`;
+      metricsEl.innerHTML = `<span class="metric-tag">${escapeHtml(metric1)}</span><span class="metric-tag">${escapeHtml(metric2)}</span>`;
     }
   }
 
@@ -61,27 +70,27 @@
 
     if (badge) {
       badge.textContent = `${report.overallRisk} RISK`;
-      badge.className = report.overallRisk === "HIGH" ? "badge badge-danger" : "badge badge-warning";
+      badge.className = report.overallRisk === "HIGH" ? "badge badge-danger" : "badge badge-warn";
     }
     if (valLock) {
       valLock.textContent = report.lockRisk;
-      valLock.className = `metric-value ${report.lockRisk === "HIGH" ? "val-high" : "val-warn"}`;
+      valLock.className = `cell-val ${report.lockRisk === "HIGH" ? "val-high" : "val-warn"}`;
     }
     if (valRewrite) {
       valRewrite.textContent = report.tableRewriteExpected ? "YES (Rewrite)" : "NO";
-      valRewrite.className = `metric-value ${report.tableRewriteExpected ? "val-high" : "val-pass"}`;
+      valRewrite.className = `cell-val ${report.tableRewriteExpected ? "val-high" : "val-pass"}`;
     }
     if (valIntegrity) {
       valIntegrity.textContent = report.dataIntegrityStatus;
-      valIntegrity.className = `metric-value ${report.dataIntegrityStatus === "PASS" ? "val-pass" : "val-high"}`;
+      valIntegrity.className = `cell-val ${report.dataIntegrityStatus === "PASS" ? "val-pass" : "val-high"}`;
     }
     if (valSandbox) {
       valSandbox.textContent = report.sandboxStatus;
-      valSandbox.className = `metric-value ${report.sandboxStatus === "PASS" ? "val-pass" : "val-high"}`;
+      valSandbox.className = `cell-val ${report.sandboxStatus === "PASS" ? "val-pass" : "val-high"}`;
     }
     if (valRollback) {
       valRollback.textContent = report.rollbackStatus;
-      valRollback.className = `metric-value ${report.rollbackStatus === "PASS" ? "val-pass" : "val-high"}`;
+      valRollback.className = `cell-val ${report.rollbackStatus === "PASS" ? "val-pass" : "val-high"}`;
     }
     if (valTables) {
       valTables.textContent = (report.affectedObjects || []).join(", ") || "orders";
@@ -90,59 +99,68 @@
     // Render Findings List
     const findingsArea = document.getElementById("findings-area");
     const findingsList = document.getElementById("findings-list");
-    if (findingsArea && findingsList && report.findings && report.findings.length > 0) {
-      findingsArea.style.display = "block";
-      findingsList.innerHTML = report.findings
-        .map(
-          (f) => `
-        <div class="finding-item">
-          <div class="finding-header">
-            <span>${escapeHtml(f.category)} [${escapeHtml(f.level)}]</span>
+    if (findingsArea && findingsList) {
+      if (report.findings && report.findings.length > 0) {
+        findingsArea.style.display = "block";
+        findingsList.innerHTML = report.findings
+          .map(
+            (f) => `
+          <div class="finding-row level-${(f.level || "HIGH").toLowerCase()}">
+            <div class="finding-row-top">
+              <span class="finding-cat">${escapeHtml(f.category)}</span>
+              <span class="badge ${f.level === "HIGH" ? "badge-danger" : "badge-warn"}">${escapeHtml(f.level)}</span>
+            </div>
+            <p class="finding-desc">${escapeHtml(f.description)}</p>
+            ${f.remediation ? `<div class="finding-remediation">💡 Safe Remediation: ${escapeHtml(f.remediation)}</div>` : ""}
           </div>
-          <p class="finding-desc">${escapeHtml(f.description)}</p>
-          ${f.remediation ? `<p class="finding-rem">💡 Remediation: ${escapeHtml(f.remediation)}</p>` : ""}
-        </div>
-      `
-        )
-        .join("");
+        `
+          )
+          .join("");
+      } else {
+        findingsArea.style.display = "none";
+      }
     }
 
-    // Render Staged Plan List
-    const planArea = document.getElementById("staged-plan-area");
-    const planList = document.getElementById("plan-list");
-    if (planArea && planList && report.recommendedPlan && report.recommendedPlan.length > 0) {
-      planArea.style.display = "block";
-      planList.innerHTML = report.recommendedPlan
-        .map((p) => `<li class="plan-step-item">${escapeHtml(p)}</li>`)
+    // Render Staged Rollout Plan
+    const stagedPlanList = document.getElementById("staged-plan-list");
+    if (stagedPlanList && report.recommendedPlan && report.recommendedPlan.length > 0) {
+      stagedPlanList.innerHTML = report.recommendedPlan
+        .map((step) => `<li>${escapeHtml(step)}</li>`)
         .join("");
     }
   }
 
   function renderApprovalCheckpoint(packet) {
     const card = document.getElementById("approval-card");
-    const targetLabel = document.getElementById("approval-target-label");
-    const tokenDisplay = document.getElementById("approval-token-display");
-    const fpDisplay = document.getElementById("approval-fingerprint-display");
-    const warningDisplay = document.getElementById("approval-warning-display");
+    const targetEl = document.getElementById("approval-target");
+    const envEl = document.getElementById("approval-env");
+    const tokenEl = document.getElementById("approval-token");
+    const fpEl = document.getElementById("approval-fingerprint");
+    const warningEl = document.getElementById("approval-warning");
+    const warningText = document.getElementById("warning-text");
 
     if (card) {
       card.style.display = "block";
-      card.className = "card approval-card active";
+      card.className = "panel approval-panel";
     }
-    if (targetLabel) {
-      targetLabel.textContent = `TARGET: ${packet.targetId} (${packet.targetEnvironment || "staging"})`;
+    if (targetEl) {
+      targetEl.textContent = packet.targetId || "staging-demo";
     }
-    if (tokenDisplay) {
-      const redactedToken = packet.approvalToken
-        ? (packet.approvalToken.length > 12 ? `sat_...${packet.approvalToken.slice(-6)}` : packet.approvalToken)
+    if (envEl) {
+      envEl.textContent = packet.targetEnvironment || "staging";
+    }
+    if (tokenEl) {
+      const redacted = packet.approvalToken
+        ? (packet.approvalToken.length > 16 ? `sat_...${packet.approvalToken.slice(-6)} (REDACTED)` : packet.approvalToken)
         : "N/A";
-      tokenDisplay.textContent = redactedToken;
+      tokenEl.textContent = redacted;
     }
-    if (fpDisplay) {
-      fpDisplay.textContent = packet.sqlFingerprint ? packet.sqlFingerprint.substring(0, 16) + "..." : "SHA-256 Validated";
+    if (fpEl) {
+      fpEl.textContent = packet.sqlFingerprint ? packet.sqlFingerprint.substring(0, 20) + "..." : "SHA-256 Validated";
     }
-    if (warningDisplay && packet.irreversibleWarning) {
-      warningDisplay.textContent = packet.irreversibleWarning;
+    if (warningEl && packet.irreversibleWarning) {
+      warningEl.style.display = "flex";
+      if (warningText) warningText.textContent = packet.irreversibleWarning;
     }
     if (btnApprove) btnApprove.disabled = false;
     if (btnReject) btnReject.disabled = false;
@@ -150,25 +168,25 @@
 
   function renderPostApplyVerification(verificationResult, applyResult) {
     const card = document.getElementById("verification-card");
-    const badge = document.getElementById("verification-badge");
+    const badge = document.getElementById("verification-status-badge");
     const list = document.getElementById("verification-checks-list");
 
     if (!card) return;
     card.style.display = "block";
 
+    const passed = verificationResult?.status === "passed" && applyResult?.success;
     if (badge) {
-      const passed = verificationResult?.status === "passed" && applyResult?.success;
-      badge.textContent = passed ? "VERIFIED (PASSED)" : "VERIFICATION FAILED";
-      badge.className = passed ? "badge badge-success" : "badge badge-danger";
+      badge.textContent = passed ? "PASSED" : "FAILED";
+      badge.className = `badge ${passed ? "badge-safe" : "badge-danger"}`;
     }
 
     if (list && verificationResult?.checks) {
       list.innerHTML = verificationResult.checks
         .map(
           (c) => `
-        <div class="verification-check-item ${c.passed ? "check-pass" : "check-fail"}">
-          <span class="check-icon">${c.passed ? "✓" : "✗"}</span>
-          <div class="check-body">
+        <div class="verification-item ${c.passed ? "check-pass" : "check-fail"}">
+          <span class="check-icon" aria-hidden="true">${c.passed ? "✓" : "✗"}</span>
+          <div class="check-content">
             <strong>${escapeHtml(c.name)}</strong>
             <p>${escapeHtml(c.details)}</p>
           </div>
@@ -180,8 +198,14 @@
   }
 
   function renderTimelineFeed(activityEvents, timeline) {
-    const feed = document.getElementById("activity-feed");
+    const feed = document.getElementById("timeline-feed");
+    const countBadge = document.getElementById("event-count-badge");
     if (!feed) return;
+
+    const events = (activityEvents && activityEvents.length > 0) ? activityEvents : (timeline || []);
+    if (countBadge) {
+      countBadge.textContent = `${events.length} Event${events.length === 1 ? "" : "s"}`;
+    }
 
     if (activityEvents && activityEvents.length > 0) {
       feed.innerHTML = activityEvents
@@ -189,15 +213,17 @@
         .reverse()
         .map(
           (evt) => `
-        <div class="activity-feed-item status-${escapeHtml((evt.status || "").toLowerCase())}">
-          <div class="evt-header">
-            <span class="evt-actor">[${escapeHtml(evt.actor)}]</span>
-            <span class="evt-phase">${escapeHtml(evt.phase)}</span>
-            <span class="evt-time">${new Date(evt.timestamp).toLocaleTimeString()}</span>
+        <div class="timeline-entry status-${escapeHtml((evt.status || "").toLowerCase())}">
+          <div class="timeline-entry-header">
+            <span class="timeline-actor">[${escapeHtml(evt.actor)}]</span>
+            <span class="timeline-time">${new Date(evt.timestamp).toLocaleTimeString()}</span>
           </div>
-          <p class="evt-msg">${escapeHtml(evt.message)}</p>
-          ${evt.toolName ? `<span class="evt-tool">🔧 ${escapeHtml(evt.toolName)}</span>` : ""}
-          ${evt.durationMs ? `<span class="evt-duration">⏱ ${escapeHtml(evt.durationMs)}ms</span>` : ""}
+          <p class="timeline-msg">${escapeHtml(evt.message)}</p>
+          <div class="timeline-meta">
+            <span>Phase: ${escapeHtml(evt.phase)}</span>
+            ${evt.toolName ? `<span>· Tool: ${escapeHtml(evt.toolName)}</span>` : ""}
+            ${evt.durationMs ? `<span>· ${escapeHtml(evt.durationMs)}ms</span>` : ""}
+          </div>
         </div>
       `
         )
@@ -208,25 +234,29 @@
         .reverse()
         .map(
           (evt) => `
-        <div class="activity-feed-item status-${escapeHtml((evt.status || "").toLowerCase())}">
-          <div class="evt-header">
-            <span class="evt-actor">[TIMELINE]</span>
-            <span class="evt-phase">${escapeHtml(evt.step)}</span>
-            <span class="evt-time">${new Date(evt.timestamp).toLocaleTimeString()}</span>
+        <div class="timeline-entry status-${escapeHtml((evt.status || "").toLowerCase())}">
+          <div class="timeline-entry-header">
+            <span class="timeline-actor">[TIMELINE]</span>
+            <span class="timeline-time">${new Date(evt.timestamp).toLocaleTimeString()}</span>
           </div>
-          <p class="evt-msg">${escapeHtml(evt.details)}</p>
+          <p class="timeline-msg">${escapeHtml(evt.details)}</p>
+          <div class="timeline-meta">
+            <span>Step: ${escapeHtml(evt.step)}</span>
+          </div>
         </div>
       `
         )
         .join("");
+    } else {
+      feed.innerHTML = `<div class="timeline-empty">Awaiting review execution trace...</div>`;
     }
   }
 
   function renderEvidenceTabs(session) {
-    const rawSqlEl = document.getElementById("raw-sql-view");
-    const rawSchemaEl = document.getElementById("raw-schema-view");
-    const rawSandboxEl = document.getElementById("raw-sandbox-view");
-    const rawAuditEl = document.getElementById("raw-audit-view");
+    const rawSqlEl = document.getElementById("evidence-sql");
+    const rawSchemaEl = document.getElementById("evidence-schema");
+    const rawSandboxEl = document.getElementById("evidence-sandbox");
+    const rawAuditEl = document.getElementById("evidence-audit");
 
     if (rawSqlEl && session.plan?.rawSql) {
       rawSqlEl.textContent = session.plan.rawSql;
@@ -240,6 +270,7 @@
     if (rawAuditEl) {
       const auditPayload = {
         sessionId: session.sessionId,
+        status: session.status,
         approvalCheckpoint: session.approvalCheckpoint,
         applyResult: session.applyResult,
         verificationResult: session.verificationResult,
@@ -279,16 +310,16 @@
 
       // Restore Subagent Badges
       if (session.schemaAnalysis) {
-        setSubagentState("schema", "COMPLETED", session.schemaAnalysis.summary, `${session.schemaAnalysis.tableCount} tables`, `${session.schemaAnalysis.totalIndexCount} indexes`);
+        setSubagentState("schema-analyst", "COMPLETED", session.schemaAnalysis.summary, `${session.schemaAnalysis.tableCount} tables`, `${session.schemaAnalysis.totalIndexCount} indexes`);
       }
       if (session.riskAnalysis) {
-        setSubagentState("risk", "COMPLETED", session.riskAnalysis.summary, `Lock: ${session.riskAnalysis.lockRisk}`, `Risk: ${session.riskAnalysis.overallRisk}`);
+        setSubagentState("risk-analyst", "COMPLETED", session.riskAnalysis.summary, `Lock: ${session.riskAnalysis.lockRisk}`, `Rewrite: ${session.riskAnalysis.tableRewriteExpected ? "YES" : "NO"}`);
       }
       if (session.sandboxOutput) {
-        setSubagentState("sandbox", session.sandboxOutput.success ? "COMPLETED" : "FAILED", session.sandboxOutput.schemaDiffSummary, `${session.sandboxOutput.executionDurationMs}ms`, `Rollback: ${session.sandboxOutput.rollbackSuccessful ? "PASS" : "FAIL"}`);
+        setSubagentState("sandbox-validator", session.sandboxOutput.success ? "COMPLETED" : "FAILED", session.sandboxOutput.schemaDiffSummary, `${session.sandboxOutput.executionDurationMs}ms`, `Rollback: ${session.sandboxOutput.rollbackSuccessful ? "PASS" : "FAIL"}`);
       }
       if (session.reviewReport) {
-        setSubagentState("synthesizer", "COMPLETED", session.reviewReport.approvalSummary, "Approval Token Generated", "Staged Plan Ready");
+        setSubagentState("review-synthesizer", "COMPLETED", session.reviewReport.approvalSummary, "Token Ready", "Plan Staged");
         updateRiskMatrix(session.reviewReport, session.riskAnalysis);
       }
 
@@ -298,10 +329,12 @@
       } else if (session.status === "COMPLETED" || session.status === "REJECTED" || session.status === "FAILED") {
         const approvalCard = document.getElementById("approval-card");
         if (approvalCard) {
-          approvalCard.className = `card approval-card ${session.status.toLowerCase()}`;
-          const tokenDisplay = document.getElementById("approval-token-display");
-          if (tokenDisplay) tokenDisplay.textContent = `SESSION STATUS: ${session.status}`;
+          approvalCard.className = `panel approval-panel ${session.status.toLowerCase()}`;
+          const tokenEl = document.getElementById("approval-token");
+          if (tokenEl) tokenEl.textContent = `SESSION STATUS: ${session.status}`;
         }
+        if (btnApprove) btnApprove.disabled = true;
+        if (btnReject) btnReject.disabled = true;
       }
 
       // Restore Post-Apply Verification
@@ -325,14 +358,15 @@
       const migrationFilePath = migrationFileInput ? migrationFileInput.value.trim() : "migrations/0038_add_order_status.sql";
 
       btnStartReview.disabled = true;
-      btnStartReview.innerHTML = `<span class="spinner"></span> Reviewing Schema...`;
+      if (btnSpinner) btnSpinner.style.display = "inline-block";
+      if (btnLabel) btnLabel.textContent = "Reviewing Schema...";
       announce("Starting TrueForge multi-subagent migration review...");
 
       // Set Subagents to Running
-      setSubagentState("schema", "RUNNING", "Inspecting PostgreSQL catalog via Schema Analyst...");
-      setSubagentState("risk", "RUNNING", "Evaluating lock risks & AST hazards via Risk Analyst...");
-      setSubagentState("sandbox", "RUNNING", "Spinning up isolated PGlite sandbox...");
-      setSubagentState("synthesizer", "RUNNING", "Waiting for subagent outputs...");
+      setSubagentState("schema-analyst", "RUNNING", "Inspecting PostgreSQL catalog via Schema Analyst...");
+      setSubagentState("risk-analyst", "RUNNING", "Evaluating lock risks & AST hazards via Risk Analyst...");
+      setSubagentState("sandbox-validator", "RUNNING", "Executing dry-run inside isolated PGlite sandbox...");
+      setSubagentState("review-synthesizer", "RUNNING", "Synthesizing multi-agent evidence and approval packet...");
 
       try {
         const res = await fetch("/api/sessions", {
@@ -355,11 +389,11 @@
         currentApprovalToken = data.approvalPacket?.approvalToken;
         localStorage.setItem("schemasentinel_current_session", currentSessionId);
 
-        // Update Subagent Cards
-        setSubagentState("schema", "COMPLETED", data.schemaAnalysis.summary, `${data.schemaAnalysis.tableCount} tables`, `${data.schemaAnalysis.totalIndexCount} indexes`);
-        setSubagentState("risk", "COMPLETED", data.riskAnalysis.summary, `Lock: ${data.riskAnalysis.lockRisk}`, `Risk: ${data.riskAnalysis.overallRisk}`);
-        setSubagentState("sandbox", data.sandboxOutput.success ? "COMPLETED" : "FAILED", data.sandboxOutput.schemaDiffSummary, `${data.sandboxOutput.executionDurationMs}ms`, `Rollback: ${data.sandboxOutput.rollbackSuccessful ? "PASS" : "FAIL"}`);
-        setSubagentState("synthesizer", "COMPLETED", data.reviewReport.approvalSummary, "Approval Token Generated", "Staged Plan Ready");
+        // Update Subagent Cards with Real Metrics
+        setSubagentState("schema-analyst", "COMPLETED", data.schemaAnalysis.summary, `${data.schemaAnalysis.tableCount} tables`, `${data.schemaAnalysis.totalIndexCount} indexes`);
+        setSubagentState("risk-analyst", "COMPLETED", data.riskAnalysis.summary, `Lock: ${data.riskAnalysis.lockRisk}`, `Rewrite: ${data.riskAnalysis.tableRewriteExpected ? "YES" : "NO"}`);
+        setSubagentState("sandbox-validator", data.sandboxOutput.success ? "COMPLETED" : "FAILED", data.sandboxOutput.schemaDiffSummary, `${data.sandboxOutput.executionDurationMs}ms`, `Rollback: ${data.sandboxOutput.rollbackSuccessful ? "PASS" : "FAIL"}`);
+        setSubagentState("review-synthesizer", "COMPLETED", data.reviewReport.approvalSummary, "Token Ready", "Plan Staged");
 
         // Update Risk Matrix & Approval Card
         updateRiskMatrix(data.reviewReport, data.riskAnalysis);
@@ -376,7 +410,8 @@
         announce(`Review failed: ${err.message}`);
       } finally {
         btnStartReview.disabled = false;
-        btnStartReview.innerHTML = `<span class="btn-icon">⚡</span> Run Multi-Agent Safety Review`;
+        if (btnSpinner) btnSpinner.style.display = "none";
+        if (btnLabel) btnLabel.textContent = "Run Safety Review";
       }
     });
   }
@@ -445,7 +480,7 @@
   }
 
   // Tab Switcher for Evidence Explorer
-  const tabButtons = document.querySelectorAll(".tab-btn");
+  const tabButtons = document.querySelectorAll(".tab-button");
   tabButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       tabButtons.forEach((b) => {
@@ -463,7 +498,7 @@
     });
   });
 
-  // Initialize
+  // Initialize on load
   loadTargets();
   if (currentSessionId) {
     loadSession(currentSessionId);
