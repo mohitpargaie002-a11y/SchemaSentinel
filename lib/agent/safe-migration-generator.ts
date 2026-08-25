@@ -373,8 +373,8 @@ export class SafeMigrationGenerator {
         remediationSteps.push(`Add column '${column}' to '${fullTableName}' as nullable first to prevent AccessExclusiveLock full-table rewrite.`);
 
         // Step 2: Backfill default values
-        proposedStatements.push(`-- Step 2: Backfill default values for existing rows\nUPDATE ${fullTableName} SET ${column} = ${defaultVal} WHERE ${column} IS NULL;`);
-        remediationSteps.push(`Backfill existing rows with default value ${defaultVal}.`);
+        proposedStatements.push(`-- Step 2: Backfill default values for existing rows (Note: For high-volume tables >100k rows, partition in batches)\nUPDATE ${fullTableName} SET ${column} = ${defaultVal} WHERE ${column} IS NULL;`);
+        remediationSteps.push(`Backfill existing rows with default value ${defaultVal} (Operational Caveat: For ultra-large tables >100k rows, run batched to minimize replication lag).`);
 
         // Step 3: Set column default for future inserts
         proposedStatements.push(`-- Step 3: Set column default for future write operations\nALTER TABLE ${fullTableName} ALTER COLUMN ${column} SET DEFAULT ${defaultVal};`);

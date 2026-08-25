@@ -1393,3 +1393,83 @@ body {
   color: var(--text-primary);
 }
 
+/* ==========================================================================
+   Responsive Breakpoints & Layout Adaptations
+   ========================================================================== */
+
+/* Large Desktop (1440px - 1920px) */
+@media (min-width: 1440px) {
+  .app-container {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+}
+
+/* Tablet / Compact Desktop (1024px) */
+@media (max-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .subagent-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .risk-matrix-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pr-meta-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Mobile & Small Tablet (768px - 390px) */
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .subagent-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-matrix-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pr-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-stats {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .safe-pr-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .approval-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
