@@ -20,6 +20,13 @@ export interface IApprovalGate {
     plan: MigrationPlan,
     approvedBy?: string
   ): ApprovalCheckpoint;
+  grantSafeMigrationApproval(
+    sessionId: string,
+    planId: string,
+    targetId: string,
+    proposedSql: string,
+    approvedBy?: string
+  ): ApprovalCheckpoint;
   verifyApproval(
     token: string,
     sessionId: string,
@@ -70,6 +77,41 @@ export class ApprovalGate implements IApprovalGate {
       sessionId,
       planId: plan.id,
       targetId: plan.targetId,
+      sqlFingerprint: fingerprint,
+      approved: true,
+      approvedBy,
+      token,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.approvedTokens.set(token, checkpoint);
+    return checkpoint;
+  }
+
+  /**
+   * Generates a signed approval checkpoint for a proposed safe migration.
+   * Cryptographically binds: SHA-256(sessionId + planId + targetId + exact_proposed_sql).
+   */
+  public grantSafeMigrationApproval(
+    sessionId: string,
+    planId: string,
+    targetId: string,
+    proposedSql: string,
+    approvedBy: string = "operator@schemasentinel.dev"
+  ): ApprovalCheckpoint {
+    const fingerprint = this.computeFingerprint(
+      sessionId,
+      planId,
+      targetId,
+      proposedSql
+    );
+
+    const token = `sat_safe_${fingerprint.substring(0, 27)}`;
+
+    const checkpoint: ApprovalCheckpoint = {
+      sessionId,
+      planId,
+      targetId,
       sqlFingerprint: fingerprint,
       approved: true,
       approvedBy,

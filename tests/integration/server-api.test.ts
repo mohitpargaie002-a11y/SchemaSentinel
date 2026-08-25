@@ -163,4 +163,53 @@ describe("Server API - HTTP Endpoints & Session Management", () => {
     expect(approveData.applyResult?.success).toBe(true);
     expect(approveData.verificationResult?.status).toBe("passed");
   });
+
+  it("POST /api/sessions/:id/safe-migration/generate and approve-pr creates GitHub PR via API", async () => {
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetId: "staging-demo",
+        migrationFilePath: "migrations/0038_add_order_status.sql",
+        userPrompt: "Review and remediate test",
+      }),
+    });
+    const createData = (await createRes.json()) as { sessionId: string };
+    expect(createRes.status).toBe(201);
+
+    // 1. Generate Safe Remediation
+    const genRes = await fetch(`${baseUrl}/api/sessions/${createData.sessionId}/safe-migration/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const genData = (await genRes.json()) as {
+      sessionId: string;
+      status: string;
+      proposal?: { proposalId: string; remediationSteps: string[] };
+    };
+
+    expect(genRes.status).toBe(200);
+    expect(genData.status).toBe("AWAITING_SAFE_MIGRATION_APPROVAL");
+    expect(genData.proposal?.remediationSteps.length).toBeGreaterThanOrEqual(4);
+
+    // 2. Approve and Open GitHub PR
+    const prRes = await fetch(`${baseUrl}/api/sessions/${createData.sessionId}/safe-migration/approve-pr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approvedBy: "security-lead@schemasentinel.dev",
+      }),
+    });
+    const prData = (await prRes.json()) as {
+      sessionId: string;
+      status: string;
+      githubPr?: { prNumber: number; htmlUrl: string; qodoStatus: string };
+    };
+
+    expect(prRes.status).toBe(200);
+    expect(prData.status).toBe("PR_CREATED");
+    expect(prData.githubPr?.prNumber).toBeGreaterThan(0);
+    expect(prData.githubPr?.qodoStatus).toBe("WAITING_FOR_REVIEW");
+  });
 });

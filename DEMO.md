@@ -22,14 +22,18 @@
              • System strictly halts before any database mutation.
              • Renders Human Approval Card with plan fingerprint and single-use token.
 
-2:00 - 2:20  [SAME-SESSION RESUMPTION & STAGING APPLY]:
-             • Operator clicks "Approve & Apply". Same logical session resumes and applies DDL to allowlisted staging.
+2:00 - 2:20  [SAFE MIGRATION GENERATION & VISUAL DIFF]:
+             • Operator clicks "Generate Safe Remediation".
+             • Autonomous engine generates zero-lock staged DDL and validates it in PGlite sandbox.
+             • Renders structured visual diff with line additions/removals and lock elimination metrics.
 
-2:20 - 2:45  [POST-APPLY VERIFICATION]:
-             • System runs 8 live invariant queries and smoke tests. All pass deterministically.
+2:20 - 2:40  [OPERATOR APPROVAL & GITHUB PR OPENED]:
+             • Operator approves safe proposal.
+             • System creates deterministic Git branch (`schemasentinel/migration/<id>`), commits remediated migration file, and opens GitHub Pull Request.
+             • PR contains full audit report and awaits automated review by Qodo.
 
-2:45 - 3:00  [SESSION HISTORY & SWITCHING]:
-             • Session History drawer displays previous runs in read-only mode for auditable compliance.
+2:40 - 3:00  [SAME-SESSION RESUMPTION OR AUDIT RETRIEVAL]:
+             • Operator can also apply to staging or browse session history in read-only mode for auditable compliance.
 ```
 
 ---
@@ -42,11 +46,16 @@ npm run serve
 ```
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 1. Click **"Run Safety Review"** to see live subagent telemetry streaming in real time.
-2. Inspect **"Deep Evidence & Audit Explorer"** tabs for SHA-256 evidence provenance.
-3. Click **"Approve & Apply to Staging"** to resume the session and apply to staging.
+2. Click **"Generate Safe Remediation"** to produce non-blocking staged DDL with visual diff and sandbox validation.
+3. Click **"Approve & Open GitHub PR"** to create a Git branch and open a Pull Request for automated Qodo review.
 4. Click **"History"** in the top navigation to switch between past sessions in read-only mode.
 
-### Option 2: Automated End-to-End CLI Proof
+### Option 2: Automated End-to-End CLI Proofs
 ```bash
+# Day 6 Safe Migration & GitHub PR Proof
+npm run demo:day6
+
+# Day 5 Live Observability & Provenance Proof
 npm run demo:day5
 ```
+

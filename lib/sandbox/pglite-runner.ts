@@ -45,8 +45,11 @@ export class PGliteSandboxRunner implements ISandboxRunner {
         assertionsPassed.push("Test dataset seeded in sandbox");
       }
 
-      // Step 3: Execute Candidate Migration
-      await db.exec(candidateSql);
+      // Step 3: Execute Candidate Migration (strip CONCURRENTLY for ephemeral PGlite WASM execution)
+      const sanitizedCandidateSql = candidateSql.replace(/\bCONCURRENTLY\b/gi, "");
+      const sanitizedRollbackSql = rollbackSql ? rollbackSql.replace(/\bCONCURRENTLY\b/gi, "") : undefined;
+
+      await db.exec(sanitizedCandidateSql);
       assertionsPassed.push("Candidate migration executed without syntax/constraint errors");
 
       // Step 4: Run Representative Smoke Queries & capture real outcomes
@@ -77,9 +80,9 @@ export class PGliteSandboxRunner implements ISandboxRunner {
 
       // Step 5: Test Rollback / Compensation SQL if provided
       let rollbackSuccessful = false;
-      if (rollbackSql) {
+      if (sanitizedRollbackSql) {
         try {
-          await db.exec(rollbackSql);
+          await db.exec(sanitizedRollbackSql);
           rollbackSuccessful = true;
           assertionsPassed.push("Rollback SQL executed and validated cleanly");
         } catch (rbErr: unknown) {

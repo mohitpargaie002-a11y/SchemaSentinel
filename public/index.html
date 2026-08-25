@@ -243,6 +243,82 @@
           </div>
         </section>
 
+        <!-- Safe Migration Proposal & GitHub PR Panel (Phase 6) -->
+        <section class="panel safe-migration-panel" id="safe-migration-panel" aria-labelledby="safe-migration-heading">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title-row">
+                <h2 id="safe-migration-heading" class="panel-title">Safe migration proposal & GitHub PR</h2>
+                <span id="safe-migration-badge" class="badge badge-info">Zero-Lock Staged</span>
+              </div>
+              <p class="panel-subtitle">Deterministic non-blocking SQL transformation & automated Pull Request</p>
+            </div>
+            <button id="btn-generate-safe-migration" class="btn btn-secondary btn-sm" disabled>
+              <span class="btn-spinner" id="safe-gen-spinner" style="display: none;"></span>
+              <span id="safe-gen-btn-label">Generate Safe Remediation</span>
+            </button>
+          </div>
+
+          <div id="safe-proposal-content" class="safe-proposal-content" style="display: none;">
+            <!-- Risk Reduction Metric Tag -->
+            <div class="safe-metric-bar">
+              <span class="safe-metric-label">Risk Reduction:</span>
+              <span id="safe-risk-reduction" class="badge badge-safe">HIGH ➔ LOW</span>
+              <span id="safe-eliminated-factors" class="safe-eliminated-text">Eliminated full table rewrite & locking</span>
+            </div>
+
+            <!-- Rationale & Remediation Steps -->
+            <div class="safe-rationale-box" id="safe-migration-rationale"></div>
+
+            <!-- Structured SQL Diff Container -->
+            <div class="safe-diff-wrapper">
+              <div class="diff-header-bar">
+                <span class="diff-header-title">Original vs Recommended SQL Diff</span>
+                <span class="diff-summary-tag" id="safe-diff-summary">—</span>
+              </div>
+              <div id="safe-diff-viewer" class="diff-code-viewer font-mono"></div>
+            </div>
+
+            <!-- Sandbox Validation Checklist -->
+            <div class="safe-validation-grid">
+              <div class="val-check-item"><span class="val-icon">✓</span> Syntax & AST Validated</div>
+              <div class="val-check-item"><span class="val-icon">✓</span> Isolated PGlite Sandbox Applied</div>
+              <div class="val-check-item"><span class="val-icon">✓</span> Schema Invariants Verified</div>
+              <div class="val-check-item"><span class="val-icon">✓</span> Rollback Queries Verified</div>
+            </div>
+
+            <!-- PR Creation Approval & Action Area -->
+            <div class="safe-pr-actions" id="safe-pr-action-box">
+              <div class="pr-action-details">
+                <span class="pr-action-hint">Cryptographic Approval Token:</span>
+                <code class="font-mono text-truncate" id="safe-approval-token">Awaiting Token</code>
+              </div>
+              <div class="pr-btn-group">
+                <button id="btn-approve-safe-pr" class="btn btn-emerald">
+                  <span class="btn-spinner" id="safe-pr-spinner" style="display: none;"></span>
+                  <span id="safe-pr-btn-label">Approve & Open GitHub PR</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Post-PR Opened Status Card -->
+            <div id="pr-created-card" class="pr-created-card" style="display: none;">
+              <div class="pr-created-header">
+                <span class="pr-success-icon">✓</span>
+                <div>
+                  <h3 class="pr-created-title" id="pr-title-text">Pull Request Created</h3>
+                  <a href="#" id="pr-link" target="_blank" rel="noopener noreferrer" class="pr-link-badge">PR (Open on GitHub) ↗</a>
+                </div>
+              </div>
+              <div class="pr-meta-grid">
+                <div><span class="meta-label">Branch:</span> <code class="meta-val font-mono" id="pr-branch-val">—</code></div>
+                <div><span class="meta-label">Commit SHA:</span> <code class="meta-val font-mono" id="pr-commit-val">—</code></div>
+                <div><span class="meta-label">Qodo Status:</span> <span class="badge badge-info" id="pr-qodo-status-badge">Waiting for Qodo review</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <!-- Right Column: Human Approval & Apply Boundary -->

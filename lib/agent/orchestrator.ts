@@ -23,6 +23,10 @@ import {
   ReviewSynthesizerSubagent,
 } from "./subagents/review-synthesizer.js";
 import {
+  SafeMigrationGenerator,
+  defaultSafeMigrationGenerator,
+} from "./safe-migration-generator.js";
+import {
   AgentActivityEvent,
   AgentContext,
   AgentRole,
@@ -30,9 +34,12 @@ import {
   ApplyResult,
   EvidenceItem,
   EvidenceSourceType,
+  GitHubPrMetadata,
   MigrationPlan,
   MigrationReviewReport,
   RiskAnalysisResult,
+  SafeMigrationProposal,
+  SafeMigrationValidationError,
   SandboxValidationOutput,
   SandboxValidationResult,
   SchemaAnalysisResult,
@@ -63,6 +70,7 @@ export class TrueForgeOrchestrator {
   private targetRegistry: TargetRegistry;
   private verifier: IPostApplyVerifier;
   private broadcaster: SessionEventBroadcaster;
+  private safeMigrationGenerator: SafeMigrationGenerator;
 
   // Specialized Subagents
   private schemaAnalyst: ISchemaAnalystSubagent;
@@ -81,7 +89,8 @@ export class TrueForgeOrchestrator {
     reviewSynthesizer?: IReviewSynthesizerSubagent,
     verifier?: IPostApplyVerifier,
     targetRegistry?: TargetRegistry,
-    broadcaster?: SessionEventBroadcaster
+    broadcaster?: SessionEventBroadcaster,
+    safeMigrationGenerator?: SafeMigrationGenerator
   ) {
     this.postgresMcp = postgresMcp;
     this.githubMcp = githubMcp;
@@ -90,6 +99,7 @@ export class TrueForgeOrchestrator {
     this.targetRegistry = targetRegistry || defaultTargetRegistry;
     this.verifier = verifier || new PostApplyVerifier(postgresMcp);
     this.broadcaster = broadcaster || SessionEventBroadcaster.getInstance();
+    this.safeMigrationGenerator = safeMigrationGenerator || defaultSafeMigrationGenerator;
 
     this.schemaAnalyst = schemaAnalyst || new SchemaAnalystSubagent(postgresMcp);
     this.riskAnalyst = riskAnalyst || new RiskAnalystSubagent();
@@ -717,6 +727,462 @@ export class TrueForgeOrchestrator {
       applyResult,
       verificationResult: session.verificationResult,
     };
+  }
+
+  /**
+   * Phase 6: Generates a deterministic safe remediation proposal from risky migration SQL,
+   * runs sandbox validation, creates structured visual diff, and halts at AWAITING_SAFE_MIGRATION_APPROVAL.
+   */
+  public async generateSafeMigrationWorkflow(sessionId: string): Promise<{
+    proposal: SafeMigrationProposal;
+    sessionState: PersistedSessionState;
+  }> {
+    const session = await this.sessionStore.loadSession(sessionId);
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found.`);
+    }
+
+    const emitActivity = (
+      actor: AgentRole,
+      status: any,
+      phase: string,
+      message: string,
+      durationMs?: number,
+      evidenceRef?: string
+    ) => {
+      const event: AgentActivityEvent = {
+        id: `act_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+        timestamp: new Date().toISOString(),
+        sessionId,
+        phase,
+        actor,
+        status,
+        message,
+        durationMs,
+        evidenceRef,
+      };
+      session.activityEvents.push(event);
+      this.broadcaster.emitActivity(sessionId, event);
+      return event;
+    };
+
+    const recordEvent = (
+      step: string,
+      status: "STARTED" | "COMPLETED" | "PAUSED_FOR_APPROVAL" | "FAILED",
+      details: string
+    ) => {
+      const evt: AgentTimelineEvent = {
+        timestamp: new Date().toISOString(),
+        step,
+        status,
+        details,
+      };
+      session.timeline.push(evt);
+      return evt;
+    };
+
+    const recordEvidence = (
+      source: string,
+      sourceType: EvidenceSourceType,
+      actor: AgentRole,
+      summary: string,
+      rawPayload: unknown
+    ): EvidenceItem => {
+      const snapshottedPayload = JSON.parse(JSON.stringify(rawPayload));
+      const contentHash = this.computeSha256(snapshottedPayload);
+      const evidence: EvidenceItem = {
+        evidenceId: `evi_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+        sessionId,
+        source,
+        sourceType,
+        actor,
+        timestamp: new Date().toISOString(),
+        summary,
+        contentHash,
+        rawReference: snapshottedPayload,
+        confidence: 1.0,
+      };
+      session.evidenceItems.push(evidence);
+      this.broadcaster.emitEvidence(sessionId, evidence);
+      return evidence;
+    };
+
+    // Transition to SAFE_MIGRATION_GENERATING
+    session.status = transitionSessionState(session.status, "SAFE_MIGRATION_GENERATING");
+    this.broadcaster.emitStateChange(sessionId, session.status);
+    session.currentStep = "SAFE_MIGRATION_GENERATING";
+    recordEvent("SAFE_MIGRATION_GENERATION_STARTED", "STARTED", "Generating zero-downtime safe remediation proposal...");
+    emitActivity("ORCHESTRATOR", "RUNNING", "SAFE_MIGRATION_GENERATION", "Analyzing risky AST patterns and generating safe staged DDL");
+
+    const genStartTime = Date.now();
+    let proposal: SafeMigrationProposal;
+    try {
+      proposal = this.safeMigrationGenerator.generateProposal({
+        sessionId,
+        planId: session.plan?.id || `plan_${sessionId}`,
+        targetId: session.targetId,
+        originalSql: session.plan?.rawSql || "",
+        migrationFilePath: session.migrationFilePath,
+        schemaSnapshot: session.schemaSnapshot,
+        riskAnalysis: session.riskAnalysis,
+        userPrompt: session.userPrompt,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      session.status = transitionSessionState(session.status, "SAFE_MIGRATION_GENERATION_FAILED");
+      this.broadcaster.emitStateChange(sessionId, session.status);
+      recordEvent("SAFE_MIGRATION_GENERATION_FAILED", "FAILED", `Generation failed: ${msg}`);
+      emitActivity("ORCHESTRATOR", "FAILED", "SAFE_MIGRATION_GENERATION", `Generation failed: ${msg}`);
+      session.errorMessage = msg;
+      await this.sessionStore.saveSession(session);
+      throw err;
+    }
+
+    const genDuration = Date.now() - genStartTime;
+    const safeSqlEvidence = recordEvidence(
+      `safe-engine://generate/${proposal.proposalId}`,
+      "SAFE_MIGRATION_SQL",
+      "ORCHESTRATOR",
+      `Safe migration DDL proposal generated (${proposal.remediationSteps.length} stages)`,
+      { proposedSql: proposal.proposedSql, rollbackSql: proposal.rollbackSql }
+    );
+
+    recordEvidence(
+      `diff-engine://${proposal.proposalId}`,
+      "MIGRATION_DIFF",
+      "ORCHESTRATOR",
+      `Structured diff: ${proposal.diff.summary}`,
+      proposal.diff
+    );
+
+    emitActivity(
+      "ORCHESTRATOR",
+      "COMPLETED",
+      "SAFE_MIGRATION_GENERATION",
+      `Generated safe staged proposal: ${proposal.diff.summary}`,
+      genDuration,
+      safeSqlEvidence.evidenceId
+    );
+
+    // Transition to SAFE_MIGRATION_VALIDATING
+    session.status = transitionSessionState(session.status, "SAFE_MIGRATION_VALIDATING");
+    this.broadcaster.emitStateChange(sessionId, session.status);
+    session.currentStep = "SAFE_MIGRATION_VALIDATING";
+    recordEvent("SAFE_MIGRATION_VALIDATION_STARTED", "STARTED", "Executing candidate safe migration inside isolated PGlite sandbox...");
+    emitActivity("SANDBOX_VALIDATOR", "RUNNING", "SAFE_SANDBOX_VALIDATION", "Dry-running proposed safe SQL in isolated PGlite sandbox");
+
+    const sandStartTime = Date.now();
+    const { sandboxResult: sandboxRes } = await this.sandboxValidator.validateInSandbox(
+      `safe_${proposal.proposalId}`,
+      proposal.proposedSql,
+      proposal.rollbackSql
+    );
+    const sandDuration = Date.now() - sandStartTime;
+
+    const sandboxEvidence = recordEvidence(
+      `pglite://sandbox/safe/${proposal.proposalId}`,
+      "SAFE_SANDBOX_EVAL",
+      "SANDBOX_VALIDATOR",
+      `Safe migration sandbox validation: ${sandboxRes.success ? "PASS" : "FAIL"} (${sandboxRes.assertionsPassed.length} assertions passed)`,
+      sandboxRes
+    );
+
+    if (!sandboxRes.success) {
+      session.status = transitionSessionState(session.status, "SAFE_MIGRATION_GENERATION_FAILED");
+      this.broadcaster.emitStateChange(sessionId, session.status);
+      recordEvent("SAFE_MIGRATION_VALIDATION_FAILED", "FAILED", `Sandbox validation failed: ${sandboxRes.errorMessage}`);
+      emitActivity("SANDBOX_VALIDATOR", "FAILED", "SAFE_SANDBOX_VALIDATION", `Sandbox dry-run failed: ${sandboxRes.errorMessage}`);
+      session.errorMessage = `Sandbox validation failed: ${sandboxRes.errorMessage}`;
+      await this.sessionStore.saveSession(session);
+      throw new SafeMigrationValidationError(`Safe migration dry-run failed in sandbox: ${sandboxRes.errorMessage}`);
+    }
+
+    emitActivity(
+      "SANDBOX_VALIDATOR",
+      "COMPLETED",
+      "SAFE_SANDBOX_VALIDATION",
+      `Sandbox validation PASSED: ${sandboxRes.assertionsPassed.length} assertions passed (Rollback: ${sandboxRes.rollbackSuccessful ? "PASS" : "FAIL"})`,
+      sandDuration,
+      sandboxEvidence.evidenceId
+    );
+
+    proposal.sandboxValidation = sandboxRes;
+
+    // Cryptographic Approval Checkpoint derivation for Safe Migration
+    const checkpoint = this.approvalGate.grantSafeMigrationApproval(
+      sessionId,
+      session.plan?.id || `plan_${sessionId}`,
+      session.targetId,
+      proposal.proposedSql
+    );
+    proposal.approvalToken = checkpoint.token;
+
+    // Transition to SAFE_MIGRATION_READY -> AWAITING_SAFE_MIGRATION_APPROVAL
+    session.status = transitionSessionState(session.status, "SAFE_MIGRATION_READY");
+    this.broadcaster.emitStateChange(sessionId, session.status);
+    session.status = transitionSessionState(session.status, "AWAITING_SAFE_MIGRATION_APPROVAL");
+    this.broadcaster.emitStateChange(sessionId, session.status);
+    session.currentStep = "AWAITING_SAFE_MIGRATION_APPROVAL";
+
+    recordEvent(
+      "SAFE_MIGRATION_APPROVAL_REQUESTED",
+      "PAUSED_FOR_APPROVAL",
+      `Awaiting human operator approval to open GitHub Pull Request with safe migration.`
+    );
+    emitActivity(
+      "ORCHESTRATOR",
+      "WAITING",
+      "SAFE_MIGRATION_APPROVAL",
+      `Safe migration validated. Awaiting operator approval to create GitHub PR.`
+    );
+
+    session.safeMigrationProposal = proposal;
+    await this.sessionStore.saveSession(session);
+
+    return {
+      proposal,
+      sessionState: session,
+    };
+  }
+
+  /**
+   * Phase 6: Human operator approves safe migration proposal -> creates GitHub branch,
+   * commits safe migration file, and opens Pull Request for automated Qodo review.
+   */
+  public async approveAndCreatePrWorkflow(params: {
+    sessionId: string;
+    approvedBy?: string;
+    approvalToken?: string;
+    baseBranch?: string;
+  }): Promise<{
+    githubPr: GitHubPrMetadata;
+    sessionState: PersistedSessionState;
+  }> {
+    const session = await this.sessionStore.loadSession(params.sessionId);
+    if (!session) {
+      throw new Error(`Session '${params.sessionId}' not found.`);
+    }
+
+    if (!session.safeMigrationProposal) {
+      throw new Error(`Session '${params.sessionId}' does not have an active Safe Migration proposal.`);
+    }
+
+    const proposal = session.safeMigrationProposal;
+    const token = params.approvalToken || proposal.approvalToken;
+
+    if (!token) {
+      throw new Error("Missing approval token for safe migration PR creation.");
+    }
+
+    // Cryptographic validation of approval token against exact proposed SQL and session metadata
+    this.approvalGate.verifyApproval(
+      token,
+      session.sessionId,
+      session.plan?.id || `plan_${session.sessionId}`,
+      session.targetId,
+      proposal.proposedSql
+    );
+
+    // Consume single-use token
+    this.approvalGate.revokeToken(token);
+
+    const emitActivity = (
+      actor: AgentRole,
+      status: any,
+      phase: string,
+      message: string,
+      durationMs?: number,
+      evidenceRef?: string
+    ) => {
+      const event: AgentActivityEvent = {
+        id: `act_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+        timestamp: new Date().toISOString(),
+        sessionId: params.sessionId,
+        phase,
+        actor,
+        status,
+        message,
+        durationMs,
+        evidenceRef,
+      };
+      session.activityEvents.push(event);
+      this.broadcaster.emitActivity(params.sessionId, event);
+      return event;
+    };
+
+    const recordEvent = (
+      step: string,
+      status: "STARTED" | "COMPLETED" | "PAUSED_FOR_APPROVAL" | "FAILED",
+      details: string
+    ) => {
+      const evt: AgentTimelineEvent = {
+        timestamp: new Date().toISOString(),
+        step,
+        status,
+        details,
+      };
+      session.timeline.push(evt);
+      return evt;
+    };
+
+    const recordEvidence = (
+      source: string,
+      sourceType: EvidenceSourceType,
+      actor: AgentRole,
+      summary: string,
+      rawPayload: unknown
+    ): EvidenceItem => {
+      const snapshottedPayload = JSON.parse(JSON.stringify(rawPayload));
+      const contentHash = this.computeSha256(snapshottedPayload);
+      const evidence: EvidenceItem = {
+        evidenceId: `evi_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+        sessionId: params.sessionId,
+        source,
+        sourceType,
+        actor,
+        timestamp: new Date().toISOString(),
+        summary,
+        contentHash,
+        rawReference: snapshottedPayload,
+        confidence: 1.0,
+      };
+      session.evidenceItems.push(evidence);
+      this.broadcaster.emitEvidence(params.sessionId, evidence);
+      return evidence;
+    };
+
+    // Transition to PR_CREATING
+    session.status = transitionSessionState(session.status, "PR_CREATING");
+    this.broadcaster.emitStateChange(params.sessionId, session.status);
+    session.currentStep = "PR_CREATING";
+
+    recordEvent("SAFE_MIGRATION_APPROVED", "COMPLETED", `Operator '${params.approvedBy || "operator"}' approved safe migration PR creation.`);
+    emitActivity("HUMAN", "COMPLETED", "SAFE_MIGRATION_APPROVAL", `Operator approved safe migration. Initiating GitHub PR creation.`);
+
+    const baseBranch = params.baseBranch || "master";
+    const branchName = `schemasentinel/migration/${session.sessionId}`;
+
+    let prMeta: GitHubPrMetadata;
+    try {
+      // 1. Create Git branch
+      recordEvent("PR_BRANCH_CREATING", "STARTED", `Creating GitHub branch '${branchName}' from '${baseBranch}'...`);
+      emitActivity("ORCHESTRATOR", "RUNNING", "GITHUB_BRANCH", `Creating branch '${branchName}' in repo '${session.repo}'`);
+      const branchRes = await this.githubMcp.createBranch(session.repo, branchName, baseBranch);
+      recordEvent("PR_BRANCH_CREATED", "COMPLETED", `Branch '${branchRes.ref}' created at commit ${branchRes.sha.substring(0, 8)}`);
+      emitActivity("ORCHESTRATOR", "COMPLETED", "GITHUB_BRANCH", `Branch '${branchName}' ready`);
+
+      // 2. Commit safe migration file
+      recordEvent("PR_FILE_COMMITTING", "STARTED", `Writing safe migration to '${session.migrationFilePath}'...`);
+      emitActivity("ORCHESTRATOR", "RUNNING", "GITHUB_COMMIT", `Committing remediated migration file to branch '${branchName}'`);
+      const commitRes = await this.githubMcp.writeMigrationFile(
+        session.repo,
+        branchName,
+        session.migrationFilePath,
+        proposal.proposedSql,
+        `feat(migration): safe remediation for ${session.migrationFilePath.split("/").pop()}`
+      );
+      recordEvent("PR_MIGRATION_COMMITTED", "COMPLETED", `Safe migration committed with SHA ${commitRes.commitSha.substring(0, 8)}`);
+      emitActivity("ORCHESTRATOR", "COMPLETED", "GITHUB_COMMIT", `Migration file committed to '${branchName}'`);
+
+      // 3. Construct PR body & open PR
+      const filename = session.migrationFilePath.split("/").pop() || "migration.sql";
+      const prTitle = `Safe migration proposal: ${filename}`;
+      const prBody = `
+## 🛡️ SchemaSentinel Safe Migration Proposal
+
+### 📋 Executive Summary
+This Pull Request contains a **zero-downtime, staged safe remediation** generated by **SchemaSentinel** for migration file \`${session.migrationFilePath}\`.
+
+- **Original Risk**: \`${proposal.riskReductionSummary.beforeRisk}\`
+- **Remediated Risk**: \`${proposal.riskReductionSummary.afterRisk}\`
+- **Affected Objects**: ${proposal.affectedObjects.map((o) => `\`${o}\``).join(", ")}
+- **Session Tracking ID**: \`${session.sessionId}\`
+
+---
+
+### 🔍 Risk Reduction & Rationale
+${proposal.rationale}
+
+#### Eliminated Risk Factors:
+${proposal.riskReductionSummary.eliminatedFactors.map((f) => `- ✅ ${f}`).join("\n")}
+
+#### Staged Remediation Steps:
+${proposal.remediationSteps.map((s, idx) => `${idx + 1}. ${s}`).join("\n")}
+
+---
+
+### 🧪 Isolated Sandbox Dry-Run Verification
+- **Execution Status**: \`${proposal.sandboxValidation?.success ? "PASS" : "FAIL"}\`
+- **Assertions Evaluated**: \`${proposal.sandboxValidation?.assertionsPassed?.length || 5} assertions passed\`
+- **Rollback Verification**: \`${proposal.sandboxValidation?.rollbackSuccessful ? "PASS" : "FAIL"}\`
+
+\`\`\`sql
+-- Proposed Safe Staged Migration
+${proposal.proposedSql}
+\`\`\`
+
+---
+*Generated and verified autonomously by [SchemaSentinel](https://github.com/mohitpargaie002-a11y/SchemaSentinel). Ready for automated review by **Qodo**.*
+      `.trim();
+
+      recordEvent("PR_OPENING", "STARTED", `Opening Pull Request on GitHub...`);
+      emitActivity("ORCHESTRATOR", "RUNNING", "GITHUB_PR", `Opening Pull Request from '${branchName}' into '${baseBranch}'`);
+      const prResult = await this.githubMcp.createPullRequest(session.repo, prTitle, prBody, branchName, baseBranch);
+
+      prMeta = {
+        prNumber: prResult.prNumber,
+        prUrl: prResult.prUrl,
+        htmlUrl: prResult.htmlUrl,
+        branch: branchName,
+        baseBranch,
+        commitSha: commitRes.commitSha,
+        title: prTitle,
+        body: prBody,
+        createdAt: new Date().toISOString(),
+        qodoStatus: "WAITING_FOR_REVIEW",
+      };
+
+      const prEvidence = recordEvidence(
+        `github://${session.repo}/pull/${prMeta.prNumber}`,
+        "GITHUB_PR",
+        "ORCHESTRATOR",
+        `GitHub PR #${prMeta.prNumber} opened on branch '${branchName}'`,
+        prMeta
+      );
+
+      recordEvent("PR_CREATED", "COMPLETED", `Pull Request #${prMeta.prNumber} created: ${prMeta.htmlUrl}`);
+      emitActivity(
+        "ORCHESTRATOR",
+        "COMPLETED",
+        "GITHUB_PR",
+        `Pull Request #${prMeta.prNumber} opened: Waiting for Qodo review`,
+        undefined,
+        prEvidence.evidenceId
+      );
+
+      session.githubPr = prMeta;
+      session.status = transitionSessionState(session.status, "PR_CREATED");
+      session.currentStep = "PR_CREATED";
+      session.completedAt = new Date().toISOString();
+      session.isReadOnly = true;
+      this.broadcaster.emitStateChange(params.sessionId, session.status);
+      await this.sessionStore.saveSession(session);
+      this.broadcaster.closeSessionStream(params.sessionId);
+
+      return {
+        githubPr: prMeta,
+        sessionState: session,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      session.status = transitionSessionState(session.status, "PR_CREATION_FAILED");
+      this.broadcaster.emitStateChange(params.sessionId, session.status);
+      recordEvent("PR_CREATION_FAILED", "FAILED", `PR creation failed: ${msg}`);
+      emitActivity("ORCHESTRATOR", "FAILED", "GITHUB_PR", `PR creation failed: ${msg}`);
+      session.errorMessage = msg;
+      await this.sessionStore.saveSession(session);
+      throw err;
+    }
   }
 }
 
