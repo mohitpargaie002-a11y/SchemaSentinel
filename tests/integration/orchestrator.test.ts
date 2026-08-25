@@ -69,6 +69,9 @@ describe("Orchestrator - Multi-Agent Integration & Event Emission", () => {
     const sessionStore = new FileSessionStore(tempDir);
     const mockGithubMcp: IGithubMcpService = {
       readMigrationFile: async () => `CREATE INDEX CONCURRENTLY idx_users_email ON public.users(email);`,
+      createBranch: async () => ({ ref: "refs/heads/mock-branch", sha: "sha_mock" }),
+      writeMigrationFile: async () => ({ commitSha: "sha_commit_mock" }),
+      createPullRequest: async () => ({ prNumber: 999, prUrl: "https://api.github.com/mock/999", htmlUrl: "https://github.com/mock/999" }),
       createPrComment: async () => ({ commentId: 1, htmlUrl: "https://github.com/mock/pr#1" }),
     };
 

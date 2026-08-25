@@ -7,8 +7,10 @@ import { defaultSessionStore, ISessionStore, PersistedSessionState } from "../ag
 import { defaultTargetRegistry, TargetRegistry } from "../safety/target-allowlist.js";
 import { SessionEventBroadcaster } from "../agent/event-stream.js";
 import {
+  ApproveSafeMigrationPrRequestSchema,
   ApproveSessionRequestSchema,
   CreateSessionRequestSchema,
+  GenerateSafeMigrationRequestSchema,
   RejectSessionRequestSchema,
   SessionSummary,
 } from "../domain/contracts.js";
@@ -173,9 +175,11 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
               createdAt: s.createdAt,
               completedAt: s.completedAt,
               approvalState: s.status === "AWAITING_APPROVAL" ? "Awaiting Approval" : s.status === "COMPLETED" ? "Approved & Applied" : s.status === "REJECTED" ? "Rejected" : s.status,
-              isReadOnly: s.isReadOnly ?? (s.status === "COMPLETED" || s.status === "REJECTED"),
+              isReadOnly: s.isReadOnly ?? (s.status === "COMPLETED" || s.status === "REJECTED" || s.status === "PR_CREATED"),
               tableCount: s.schemaAnalysis?.tableCount || s.schemaSnapshot?.tables.length || 0,
               eventCount: (s.activityEvents || []).length,
+              hasSafeProposal: Boolean(s.safeMigrationProposal),
+              githubPrUrl: s.githubPr?.htmlUrl,
             });
           }
         }
@@ -374,7 +378,59 @@ export function createSchemaSentinelServer(options: CreateServerOptions = {}) {
         });
       }
 
-      // 10. Static File Serving (Web UI)
+      // 10. Generate Safe Migration Remediation API (Phase 6)
+      const safeGenMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/(?:safe-migration\/generate|generate-safe-migration)$/);
+      if (req.method === "POST" && safeGenMatch) {
+        const parsedSessionId = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/).safeParse(safeGenMatch[1]);
+        if (!parsedSessionId.success) {
+          return sendError(400, "Validation failed: invalid sessionId format", parsedSessionId.error.format());
+        }
+        const sessionId = parsedSessionId.data;
+
+        const result = await orchestrator.generateSafeMigrationWorkflow(sessionId);
+        return sendJson(200, {
+          sessionId,
+          status: result.sessionState.status,
+          proposal: result.proposal,
+          timeline: result.sessionState.timeline,
+          activityEvents: result.sessionState.activityEvents,
+          evidenceItems: result.sessionState.evidenceItems,
+        });
+      }
+
+      // 11. Approve Safe Migration & Open GitHub Pull Request API (Phase 6)
+      const safePrMatch = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/(?:safe-migration\/approve-pr|approve-safe-migration-pr)$/);
+      if (req.method === "POST" && safePrMatch) {
+        const parsedSessionId = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/).safeParse(safePrMatch[1]);
+        if (!parsedSessionId.success) {
+          return sendError(400, "Validation failed: invalid sessionId format", parsedSessionId.error.format());
+        }
+        const sessionId = parsedSessionId.data;
+        const rawBody = await parseJsonBody();
+        const parseResult = ApproveSafeMigrationPrRequestSchema.safeParse(rawBody);
+        if (!parseResult.success) {
+          return sendError(400, "Invalid safe migration PR approval request payload", parseResult.error.format());
+        }
+
+        const { approvedBy, approvalToken, baseBranch } = parseResult.data;
+        const result = await orchestrator.approveAndCreatePrWorkflow({
+          sessionId,
+          approvedBy,
+          approvalToken,
+          baseBranch,
+        });
+
+        return sendJson(200, {
+          sessionId,
+          status: result.sessionState.status,
+          githubPr: result.githubPr,
+          timeline: result.sessionState.timeline,
+          activityEvents: result.sessionState.activityEvents,
+          evidenceItems: result.sessionState.evidenceItems,
+        });
+      }
+
+      // 12. Static File Serving (Web UI)
       let filePath = pathname === "/" ? "/index.html" : pathname;
       const safePath = path.normalize(path.join(staticDir, filePath));
 

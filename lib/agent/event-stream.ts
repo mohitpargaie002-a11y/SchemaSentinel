@@ -87,6 +87,14 @@ export class SessionEventBroadcaster {
     this.emitter.emit(`evidence:${sessionId}`, evidence);
   }
 
+  public emitActivityEvent(sessionId: string, event: AgentActivityEvent): void {
+    this.emitActivity(sessionId, event);
+  }
+
+  public emitEvidenceItem(sessionId: string, evidence: EvidenceItem): void {
+    this.emitEvidence(sessionId, evidence);
+  }
+
   /**
    * Broadcast a session state transition
    */

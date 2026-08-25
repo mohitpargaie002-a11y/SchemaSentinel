@@ -117,34 +117,42 @@ The session lifecycle is governed by an explicit state machine that strictly fai
  │  AWAITING_APPROVAL   │
  └──────────┬───────────┘
             │
-      ┌─────┴──────────────┐
-      │ (Operator Reject)  │ (Operator Approve)
-      ▼                    ▼
-┌───────────┐        ┌──────────┐
-│ REJECTED  │        │ APPROVED │
-└───────────┘        └────┬─────┘
- (Terminal)               │
-                          ▼
-                     ┌──────────┐
-                     │ APPLYING │
-                     └────┬─────┘
-                          │
-                          ▼
-                    ┌───────────┐
-                    │ VERIFYING │
-                    └─────┬─────┘
-                          │
-          ┌───────────────┴───────────────┐
-          │ (All Checks Pass)             │ (Check Failed)
-          ▼                               ▼
-    ┌───────────┐             ┌──────────────────────┐
-    │ COMPLETED │             │ VERIFICATION_FAILED  │
-    └───────────┘             └──────────────────────┘
-     (Terminal)                      (Terminal)
+      ┌─────┴──────────────┬───────────────────────────────┐
+      │ (Operator Reject)  │ (Operator Approve)            │ (Generate Safe Remediation)
+      ▼                    ▼                               ▼
+┌───────────┐        ┌──────────┐            ┌───────────────────────────┐
+│ REJECTED  │        │ APPROVED │            │ SAFE_MIGRATION_GENERATING │
+└───────────┘        └────┬─────┘            └─────────────┬─────────────┘
+ (Terminal)               │                                │
+                          ▼                                ▼
+                     ┌──────────┐            ┌───────────────────────────┐
+                     │ APPLYING │            │ SAFE_MIGRATION_VALIDATING │
+                     └────┬─────┘            └─────────────┬─────────────┘
+                          │                                │
+                          ▼                                ▼
+                    ┌───────────┐            ┌───────────────────────────┐
+                    │ VERIFYING │            │   SAFE_MIGRATION_READY    │
+                    └─────┬─────┘            └─────────────┬─────────────┘
+                          │                                │
+          ┌───────────────┴───────────────┐                ▼
+          │ (All Checks Pass)             │          ┌───────────────────────────────────┐
+          ▼                               ▼          │ AWAITING_SAFE_MIGRATION_APPROVAL  │
+    ┌───────────┐             ┌──────────────────────┐└─────────────┬─────────────────────┘
+    │ COMPLETED │             │ VERIFICATION_FAILED  │              │ (Approve PR)
+    └───────────┘             └──────────────────────┘              ▼
+     (Terminal)                      (Terminal)              ┌─────────────┐
+                                                             │ PR_CREATING │
+                                                             └──────┬──────┘
+                                                                    │
+                                                                    ▼
+                                                             ┌────────────┐
+                                                             │ PR_CREATED │
+                                                             └────────────┘
+                                                               (Terminal)
 ```
 
-- Invalid jumps (e.g. `AWAITING_APPROVAL → APPLYING`, `REJECTED → APPLYING`, `COMPLETED → APPLYING`) throw `StateTransitionError` and fail closed.
-- Completed and rejected historical sessions are marked `isReadOnly: true`.
+- Invalid jumps throw `StateTransitionError` and fail closed.
+- Completed, rejected, and PR-created sessions are marked `isReadOnly: true`.
 
 ---
 
@@ -161,3 +169,6 @@ The session lifecycle is governed by an explicit state machine that strictly fai
 | `POST` | `/api/sessions` | Create and execute new multi-subagent review session. |
 | `POST` | `/api/sessions/:id/approve` | Resume session, authorize staging apply, and verify invariants. |
 | `POST` | `/api/sessions/:id/reject` | Resume session with operator rejection (zero mutations). |
+| `POST` | `/api/sessions/:id/safe-migration/generate` | Generate non-blocking staged remediation, run PGlite sandbox dry-run, create visual diff. |
+| `POST` | `/api/sessions/:id/safe-migration/approve-pr` | Cryptographically verify operator approval, create Git branch, commit safe SQL, and open GitHub PR for automated Qodo review. |
+

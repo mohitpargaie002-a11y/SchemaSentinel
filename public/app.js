@@ -95,6 +95,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const evidenceSandbox = document.getElementById("evidence-sandbox");
   const evidenceVerification = document.getElementById("evidence-verification");
   const evidenceAudit = document.getElementById("evidence-audit");
+  // Safe Migration & GitHub PR Panel (Phase 6)
+  const safeMigrationPanel = document.getElementById("safe-migration-panel");
+  const btnGenerateSafeMigration = document.getElementById("btn-generate-safe-migration");
+  const safeGenSpinner = document.getElementById("safe-gen-spinner");
+  const safeGenBtnLabel = document.getElementById("safe-gen-btn-label");
+  const safeProposalContent = document.getElementById("safe-proposal-content");
+  const safeRiskReduction = document.getElementById("safe-risk-reduction");
+  const safeEliminatedFactors = document.getElementById("safe-eliminated-factors");
+  const safeMigrationRationale = document.getElementById("safe-migration-rationale");
+  const safeDiffSummary = document.getElementById("safe-diff-summary");
+  const safeDiffViewer = document.getElementById("safe-diff-viewer");
+  const safeApprovalToken = document.getElementById("safe-approval-token");
+  const btnApproveSafePr = document.getElementById("btn-approve-safe-pr");
+  const safePrSpinner = document.getElementById("safe-pr-spinner");
+  const safePrBtnLabel = document.getElementById("safe-pr-btn-label");
+  const prCreatedCard = document.getElementById("pr-created-card");
+  const prLink = document.getElementById("pr-link");
+  const prBranchVal = document.getElementById("pr-branch-val");
+  const prCommitVal = document.getElementById("pr-commit-val");
+  const prQodoStatusBadge = document.getElementById("pr-qodo-status-badge");
 
   // Local Application State
   let currentSessionId = null;
@@ -534,6 +554,93 @@ document.addEventListener("DOMContentLoaded", () => {
       verificationCard.style.display = "none";
     }
 
+    // Safe Migration Panel (Phase 6)
+    if (btnGenerateSafeMigration) {
+      if ((session.status === "AWAITING_APPROVAL" || session.status === "REVIEW_READY") && !session.safeMigrationProposal && !isReadOnlyMode) {
+        btnGenerateSafeMigration.disabled = false;
+      } else {
+        btnGenerateSafeMigration.disabled = true;
+      }
+    }
+
+    if (session.safeMigrationProposal) {
+      const proposal = session.safeMigrationProposal;
+      if (safeProposalContent) safeProposalContent.style.display = "flex";
+
+      if (safeRiskReduction) {
+        safeRiskReduction.textContent = `${proposal.riskReductionSummary.beforeRisk} ➔ ${proposal.riskReductionSummary.afterRisk}`;
+        safeRiskReduction.className = `badge ${proposal.riskReductionSummary.afterRisk === "LOW" ? "badge-safe" : "badge-warn"}`;
+      }
+
+      if (safeEliminatedFactors) {
+        safeEliminatedFactors.textContent = proposal.riskReductionSummary.eliminatedFactors.join(" • ") || "Zero-lock staged execution";
+      }
+
+      if (safeMigrationRationale) {
+        safeMigrationRationale.innerHTML = `
+          <strong>Safe Remediation Rationale:</strong> ${escapeHtml(proposal.rationale)}
+          <ol style="margin-top: 6px; padding-left: 18px;">
+            ${proposal.remediationSteps.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}
+          </ol>
+        `;
+      }
+
+      if (safeDiffSummary) {
+        safeDiffSummary.textContent = proposal.diff.summary || `${proposal.diff.addedLines} lines added, ${proposal.diff.removedLines} lines removed`;
+      }
+
+      if (safeDiffViewer && proposal.diff && proposal.diff.chunks) {
+        safeDiffViewer.innerHTML = proposal.diff.chunks
+          .map((chunk) => `
+            <div class="diff-chunk-wrap">
+              ${chunk.explanation ? `<div class="diff-chunk-explanation">ℹ️ ${escapeHtml(chunk.explanation)}</div>` : ""}
+              ${chunk.lines
+                .map((line) => {
+                  const cls = chunk.type === "added" ? "diff-line-added" : chunk.type === "removed" ? "diff-line-removed" : "diff-line-unchanged";
+                  const marker = chunk.type === "added" ? "+" : chunk.type === "removed" ? "-" : " ";
+                  return `<div class="diff-line ${cls}"><span class="diff-marker">${marker}</span><span class="diff-text">${escapeHtml(line)}</span></div>`;
+                })
+                .join("")}
+            </div>
+          `)
+          .join("");
+      }
+
+      if (safeApprovalToken) {
+        const rawSafeTok = proposal.approvalToken;
+        safeApprovalToken.textContent = rawSafeTok
+          ? (rawSafeTok.length > 12 ? `sat_safe_...${rawSafeTok.slice(-6)} (REDACTED)` : "sat_safe_... (REDACTED)")
+          : "sat_safe_... (REDACTED)";
+      }
+
+      if (btnApproveSafePr) {
+        if (session.status === "AWAITING_SAFE_MIGRATION_APPROVAL" && !isReadOnlyMode) {
+          btnApproveSafePr.disabled = false;
+        } else {
+          btnApproveSafePr.disabled = true;
+        }
+      }
+    } else {
+      if (safeProposalContent) safeProposalContent.style.display = "none";
+    }
+
+    // GitHub PR Opened Card
+    if (session.githubPr) {
+      const pr = session.githubPr;
+      if (prCreatedCard) prCreatedCard.style.display = "flex";
+      if (prLink) {
+        prLink.href = pr.htmlUrl;
+        prLink.textContent = `PR #${pr.prNumber} (${pr.title}) ↗`;
+      }
+      if (prBranchVal) prBranchVal.textContent = pr.branch;
+      if (prCommitVal) prCommitVal.textContent = (pr.commitSha || "").substring(0, 8);
+      if (prQodoStatusBadge) {
+        prQodoStatusBadge.textContent = pr.qodoStatus || "Waiting for Qodo review";
+      }
+    } else {
+      if (prCreatedCard) prCreatedCard.style.display = "none";
+    }
+
     // Timeline Events
     timelineFeed.innerHTML = "";
     const events = session.activityEvents || [];
@@ -555,6 +662,17 @@ document.addEventListener("DOMContentLoaded", () => {
         status: session.status,
         planFingerprint: session.approvalPacket?.sqlFingerprint || session.approvalCheckpoint?.sqlFingerprint,
         tokenRedacted: session.approvalPacket?.approvalToken || session.approvalCheckpoint?.token,
+        safeProposal: session.safeMigrationProposal ? {
+          proposalId: session.safeMigrationProposal.proposalId,
+          sqlFingerprint: session.safeMigrationProposal.proposedSqlFingerprint,
+          remediationStepsCount: session.safeMigrationProposal.remediationSteps.length,
+          sandboxPassed: session.safeMigrationProposal.sandboxValidation?.status === "pass",
+        } : null,
+        githubPr: session.githubPr ? {
+          prNumber: session.githubPr.prNumber,
+          branch: session.githubPr.branch,
+          commitSha: session.githubPr.commitSha,
+        } : null,
         applyAuditLog: session.applyResult?.auditLog || [],
         evidenceProvenance: session.evidenceItems || [],
         createdAt: session.createdAt,
@@ -743,6 +861,82 @@ document.addEventListener("DOMContentLoaded", () => {
       alert(`Reject Failed: ${err.message}`);
     }
   });
+
+  // Phase 6: Generate Safe Remediation
+  if (btnGenerateSafeMigration) {
+    btnGenerateSafeMigration.addEventListener("click", async () => {
+      if (!currentSessionId || isReadOnlyMode) return;
+
+      btnGenerateSafeMigration.disabled = true;
+      if (safeGenSpinner) safeGenSpinner.style.display = "inline-block";
+      if (safeGenBtnLabel) safeGenBtnLabel.textContent = "Generating...";
+      announce("Generating safe staged migration and running sandbox validation...");
+
+      try {
+        const response = await fetch(`/api/sessions/${currentSessionId}/safe-migration/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to generate safe migration");
+        }
+
+        currentSessionData = { ...currentSessionData, ...data };
+        renderFullSessionState(currentSessionData);
+        loadSessionHistory();
+        announce("Safe migration generated and verified in sandbox. Operator approval required to open GitHub PR.");
+      } catch (err) {
+        alert(`Safe Migration Generation Failed: ${err.message}`);
+      } finally {
+        if (safeGenSpinner) safeGenSpinner.style.display = "none";
+        if (safeGenBtnLabel) safeGenBtnLabel.textContent = "Generate Safe Remediation";
+        if (currentSessionData && !currentSessionData.safeMigrationProposal) {
+          btnGenerateSafeMigration.disabled = false;
+        }
+      }
+    });
+  }
+
+  // Phase 6: Approve Safe Migration & Create GitHub PR
+  if (btnApproveSafePr) {
+    btnApproveSafePr.addEventListener("click", async () => {
+      if (!currentSessionId || isReadOnlyMode) return;
+
+      btnApproveSafePr.disabled = true;
+      if (safePrSpinner) safePrSpinner.style.display = "inline-block";
+      if (safePrBtnLabel) safePrBtnLabel.textContent = "Opening PR...";
+      announce("Operator approved safe migration. Creating Git branch and opening GitHub Pull Request...");
+
+      try {
+        const response = await fetch(`/api/sessions/${currentSessionId}/safe-migration/approve-pr`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            approvedBy: "lead-dba@schemasentinel.dev",
+            baseBranch: "master",
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to open GitHub PR");
+        }
+
+        currentSessionData = { ...currentSessionData, ...data };
+        renderFullSessionState(currentSessionData);
+        loadSessionHistory();
+        announce(`GitHub PR #${data.githubPr?.prNumber || ""} created successfully. Awaiting Qodo review.`);
+      } catch (err) {
+        alert(`PR Creation Failed: ${err.message}`);
+      } finally {
+        if (safePrSpinner) safePrSpinner.style.display = "none";
+        if (safePrBtnLabel) safePrBtnLabel.textContent = "Approve & Open GitHub PR";
+      }
+    });
+  }
 
   // Initial History Load
   loadSessionHistory();
