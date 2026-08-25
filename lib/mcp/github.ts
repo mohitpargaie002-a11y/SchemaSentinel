@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync } from "child_process";
+import { z } from "zod";
 import { GitHubMcpError } from "../domain/contracts.js";
 
 export interface GithubPrCommentPayload {
@@ -17,22 +18,12 @@ export interface GithubPrCommentPayload {
 export interface IGithubMcpService {
   readMigrationFile(repo: string, filePath: string): Promise<string>;
   createBranch(repo: string, branchName: string, baseBranch?: string): Promise<{ ref: string; sha: string }>;
-  writeMigrationFile(
-    repo: string,
-    branch: string,
-    filePath: string,
-    content: string,
-    commitMessage: string
-  ): Promise<{ commitSha: string }>;
-  createPullRequest(
-    repo: string,
-    title: string,
-    body: string,
-    headBranch: string,
-    baseBranch?: string
-  ): Promise<{ prNumber: number; prUrl: string; htmlUrl: string }>;
+  writeMigrationFile(repo: string, branch: string, filePath: string, content: string, commitMessage: string): Promise<{ commitSha: string }>;
+  createPullRequest(repo: string, title: string, body: string, headBranch: string, baseBranch?: string): Promise<{ prNumber: number; prUrl: string; htmlUrl: string }>;
   createPrComment(repo: string, payload: GithubPrCommentPayload): Promise<{ commentId: number; htmlUrl: string }>;
 }
+
+const TokenSchema = z.string().trim().min(1);
 
 export class GithubMcpService implements IGithubMcpService {
   private token: string;
@@ -46,18 +37,29 @@ export class GithubMcpService implements IGithubMcpService {
     this.token = customToken || this.loadGitHubToken();
   }
 
-  private loadGitHubToken(): string {
-    if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  public isLiveMode(): boolean {
+    return Boolean(this.token);
+  }
 
-    // Check .env file
+  private loadGitHubToken(): string {
+    if (process.env.GITHUB_TOKEN) {
+      const parsed = TokenSchema.safeParse(process.env.GITHUB_TOKEN);
+      if (parsed.success) return parsed.data;
+    }
+
+    // Check .env file with strict Zod parsing
     const envPath = path.resolve(process.cwd(), ".env");
     if (fs.existsSync(envPath)) {
       try {
         const envContent = fs.readFileSync(envPath, "utf-8");
         const m = envContent.match(/GITHUB_TOKEN=(.*)/);
-        if (m && m[1].trim()) return m[1].trim();
-      } catch {
-        // ignore
+        if (m && m[1]) {
+          const parsed = TokenSchema.safeParse(m[1].trim());
+          if (parsed.success) return parsed.data;
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[GitHubMCP] Notice: Could not read .env file for token: ${msg}\n`);
       }
     }
 
@@ -70,11 +72,14 @@ export class GithubMcpService implements IGithubMcpService {
       });
       for (const line of credOutput.split("\n")) {
         if (line.startsWith("password=")) {
-          return line.substring(9).trim();
+          const parsed = TokenSchema.safeParse(line.substring(9).trim());
+          if (parsed.success) return parsed.data;
         }
       }
-    } catch {
-      // ignore
+    } catch (err: unknown) {
+      // Git credential helper not configured or unavailable in non-interactive environment
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[GitHubMCP] Notice: git credential helper returned: ${msg}\n`);
     }
 
     return "";
@@ -165,11 +170,29 @@ export class GithubMcpService implements IGithubMcpService {
         if (res.status === 200 && res.data.content) {
           return Buffer.from(res.data.content, "base64").toString("utf-8");
         }
-      } catch {
-        // Fall back to local fixture / mock
+      } catch (err: unknown) {
+        // Fall through to local workspace file check
       }
     }
 
+    // Check local repository disk path
+    const localPath = path.resolve(process.cwd(), filePath);
+    if (fs.existsSync(localPath)) {
+      return fs.readFileSync(localPath, "utf-8");
+    }
+
+    // Check in-memory files (written by writeMigrationFile)
+    for (const [key, content] of this.memoryFiles.entries()) {
+      if (key.endsWith(`:${filePath}`)) {
+        return content;
+      }
+    }
+
+    if (this.token) {
+      throw new GitHubMcpError(`Migration file '${filePath}' not found in repository '${repo}' or local workspace.`);
+    }
+
+    // Explicit mock / local sandbox test fixture
     return `-- Candidate migration file from ${repo}:${filePath}\nALTER TABLE orders ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending';\nCREATE INDEX idx_orders_status ON orders(status);`;
   }
 
@@ -184,50 +207,50 @@ export class GithubMcpService implements IGithubMcpService {
     const validBranch = this.sanitizeBranchName(branchName);
 
     if (this.token) {
-      try {
-        // 1. Get base branch commit SHA
-        const baseRefRes = await this.makeGithubRequest<{ object: { sha: string } }>(
+      // 1. Get base branch commit SHA
+      const baseRefRes = await this.makeGithubRequest<{ object: { sha: string } }>(
+        "GET",
+        `/repos/${repo}/git/ref/heads/${baseBranch}`
+      );
+
+      let baseSha = baseRefRes.status === 200 ? baseRefRes.data.object.sha : "";
+      if (!baseSha) {
+        // Try main branch if baseBranch was default
+        const mainRefRes = await this.makeGithubRequest<{ object: { sha: string } }>(
           "GET",
-          `/repos/${repo}/git/ref/heads/${baseBranch}`
+          `/repos/${repo}/git/ref/heads/main`
         );
-
-        let baseSha = baseRefRes.status === 200 ? baseRefRes.data.object.sha : "";
-        if (!baseSha) {
-          // Try main branch
-          const mainRefRes = await this.makeGithubRequest<{ object: { sha: string } }>(
-            "GET",
-            `/repos/${repo}/git/ref/heads/main`
-          );
-          if (mainRefRes.status === 200) baseSha = mainRefRes.data.object.sha;
-        }
-
-        if (baseSha) {
-          const createRefRes = await this.makeGithubRequest<{ ref: string; object: { sha: string } }>(
-            "POST",
-            `/repos/${repo}/git/refs`,
-            {
-              ref: `refs/heads/${validBranch}`,
-              sha: baseSha,
-            }
-          );
-
-          if (createRefRes.status === 201) {
-            return {
-              ref: createRefRes.data.ref,
-              sha: createRefRes.data.object.sha,
-            };
-          }
-          if (createRefRes.status === 422) {
-            // Branch already exists, update or return existing
-            return {
-              ref: `refs/heads/${validBranch}`,
-              sha: baseSha,
-            };
-          }
-        }
-      } catch (err) {
-        // In testing or fallback environments, proceed to memory simulation
+        if (mainRefRes.status === 200) baseSha = mainRefRes.data.object.sha;
       }
+
+      if (!baseSha) {
+        throw new GitHubMcpError(`Could not find base branch '${baseBranch}' or 'main' in repository '${repo}'.`);
+      }
+
+      const createRefRes = await this.makeGithubRequest<{ ref: string; object: { sha: string } }>(
+        "POST",
+        `/repos/${repo}/git/refs`,
+        {
+          ref: `refs/heads/${validBranch}`,
+          sha: baseSha,
+        }
+      );
+
+      if (createRefRes.status === 201) {
+        return {
+          ref: createRefRes.data.ref,
+          sha: createRefRes.data.object.sha,
+        };
+      }
+      if (createRefRes.status === 422) {
+        // Branch already exists idempotently
+        return {
+          ref: `refs/heads/${validBranch}`,
+          sha: baseSha,
+        };
+      }
+
+      throw new GitHubMcpError(`GitHub API failed to create branch '${validBranch}' in '${repo}' with status ${createRefRes.status}.`);
     }
 
     // Deterministic memory fallback for testing / simulated execution
@@ -252,36 +275,33 @@ export class GithubMcpService implements IGithubMcpService {
     const validBranch = this.sanitizeBranchName(branch);
 
     if (this.token) {
-      try {
-        // Check if file already exists to get SHA
-        let fileSha: string | undefined;
-        try {
-          const existingRes = await this.makeGithubRequest<{ sha: string }>(
-            "GET",
-            `/repos/${repo}/contents/${filePath}?ref=${validBranch}`
-          );
-          if (existingRes.status === 200) fileSha = existingRes.data.sha;
-        } catch {
-          // File does not exist yet
-        }
+      // Check if file already exists to get SHA
+      let fileSha: string | undefined;
+      const existingRes = await this.makeGithubRequest<{ sha: string }>(
+        "GET",
+        `/repos/${repo}/contents/${filePath}?ref=${validBranch}`
+      ).catch(() => ({ status: 404, data: { sha: "" } }));
 
-        const putRes = await this.makeGithubRequest<{ commit: { sha: string } }>(
-          "PUT",
-          `/repos/${repo}/contents/${filePath}`,
-          {
-            message: commitMessage,
-            content: Buffer.from(content, "utf-8").toString("base64"),
-            branch: validBranch,
-            ...(fileSha ? { sha: fileSha } : {}),
-          }
-        );
-
-        if (putRes.status === 200 || putRes.status === 201) {
-          return { commitSha: putRes.data.commit.sha };
-        }
-      } catch {
-        // Fallback to simulated commit in mock mode
+      if (existingRes.status === 200 && existingRes.data.sha) {
+        fileSha = existingRes.data.sha;
       }
+
+      const putRes = await this.makeGithubRequest<{ commit: { sha: string } }>(
+        "PUT",
+        `/repos/${repo}/contents/${filePath}`,
+        {
+          message: commitMessage,
+          content: Buffer.from(content, "utf-8").toString("base64"),
+          branch: validBranch,
+          ...(fileSha ? { sha: fileSha } : {}),
+        }
+      );
+
+      if (putRes.status === 200 || putRes.status === 201) {
+        return { commitSha: putRes.data.commit.sha };
+      }
+
+      throw new GitHubMcpError(`GitHub API failed to commit file '${filePath}' to branch '${validBranch}' in '${repo}' with status ${putRes.status}.`);
     }
 
     const commitSha = crypto.createHash("sha1").update(content + Date.now()).digest("hex");
@@ -303,28 +323,44 @@ export class GithubMcpService implements IGithubMcpService {
     const validHead = this.sanitizeBranchName(headBranch);
 
     if (this.token) {
-      try {
-        const prRes = await this.makeGithubRequest<{ number: number; url: string; html_url: string }>(
-          "POST",
-          `/repos/${repo}/pulls`,
-          {
-            title,
-            body,
-            head: validHead,
-            base: baseBranch,
-          }
-        );
+      const prRes = await this.makeGithubRequest<{ number: number; url: string; html_url: string }>(
+        "POST",
+        `/repos/${repo}/pulls`,
+        {
+          title,
+          body,
+          head: validHead,
+          base: baseBranch,
+        }
+      );
 
-        if (prRes.status === 201) {
+      if (prRes.status === 201) {
+        return {
+          prNumber: prRes.data.number,
+          prUrl: prRes.data.url,
+          htmlUrl: prRes.data.html_url,
+        };
+      }
+
+      if (prRes.status === 422) {
+        // Query existing pull request for this head branch
+        const owner = repo.split("/")[0];
+        const existingPrsRes = await this.makeGithubRequest<Array<{ number: number; url: string; html_url: string }>>(
+          "GET",
+          `/repos/${repo}/pulls?head=${owner}:${validHead}&state=all`
+        ).catch(() => ({ status: 500, data: [] }));
+
+        if (existingPrsRes.status === 200 && existingPrsRes.data.length > 0) {
+          const existingPr = existingPrsRes.data[0];
           return {
-            prNumber: prRes.data.number,
-            prUrl: prRes.data.url,
-            htmlUrl: prRes.data.html_url,
+            prNumber: existingPr.number,
+            prUrl: existingPr.url,
+            htmlUrl: existingPr.html_url,
           };
         }
-      } catch {
-        // Fallback to memory
       }
+
+      throw new GitHubMcpError(`GitHub API failed to open Pull Request from '${validHead}' into '${baseBranch}' with status ${prRes.status}.`);
     }
 
     const prNumber = ++this.prCounter;
@@ -371,18 +407,15 @@ ${payload.sandboxResults}
     `.trim();
 
     if (this.token) {
-      try {
-        const res = await this.makeGithubRequest<{ id: number; html_url: string }>(
-          "POST",
-          `/repos/${repo}/issues/${payload.prNumber}/comments`,
-          { body: commentMarkdown }
-        );
-        if (res.status === 201) {
-          return { commentId: res.data.id, htmlUrl: res.data.html_url };
-        }
-      } catch {
-        // Fallback
+      const res = await this.makeGithubRequest<{ id: number; html_url: string }>(
+        "POST",
+        `/repos/${repo}/issues/${payload.prNumber}/comments`,
+        { body: commentMarkdown }
+      );
+      if (res.status === 201) {
+        return { commentId: res.data.id, htmlUrl: res.data.html_url };
       }
+      throw new GitHubMcpError(`GitHub API failed to post comment on PR #${payload.prNumber} with status ${res.status}.`);
     }
 
     return {

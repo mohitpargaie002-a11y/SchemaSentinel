@@ -21,6 +21,125 @@ export interface GenerateSafeMigrationInput {
   userPrompt?: string;
 }
 
+/**
+ * PostgreSQL-aware SQL statement splitter that respects single quotes, double quotes,
+ * dollar quotes ($$...$$ or $tag$...$tag$), line comments (--), and block comments.
+ */
+export function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let dollarQuoteTag: string | null = null;
+
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+    const nextChar = i + 1 < sql.length ? sql[i + 1] : "";
+
+    // Handle line comments
+    if (!inSingleQuote && !inDoubleQuote && !dollarQuoteTag && !inBlockComment) {
+      if (char === "-" && nextChar === "-") {
+        inLineComment = true;
+      }
+    }
+    if (inLineComment) {
+      current += char;
+      if (char === "\n") {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    // Handle block comments
+    if (!inSingleQuote && !inDoubleQuote && !dollarQuoteTag && !inLineComment) {
+      if (char === "/" && nextChar === "*") {
+        inBlockComment = true;
+        current += char;
+        continue;
+      }
+    }
+    if (inBlockComment) {
+      current += char;
+      if (char === "*" && nextChar === "/") {
+        inBlockComment = false;
+        current += nextChar;
+        i++;
+      }
+      continue;
+    }
+
+    // Handle Dollar Quotes ($$...$$ or $tag$...$tag$)
+    if (!inSingleQuote && !inDoubleQuote && !inLineComment && !inBlockComment) {
+      if (char === "$" && !dollarQuoteTag) {
+        const match = sql.slice(i).match(/^(\$[a-zA-Z0-9_]*\$)/);
+        if (match) {
+          dollarQuoteTag = match[1];
+          current += dollarQuoteTag;
+          i += dollarQuoteTag.length - 1;
+          continue;
+        }
+      } else if (dollarQuoteTag && char === "$") {
+        if (sql.slice(i).startsWith(dollarQuoteTag)) {
+          current += dollarQuoteTag;
+          i += dollarQuoteTag.length - 1;
+          dollarQuoteTag = null;
+          continue;
+        }
+      }
+    }
+
+    if (dollarQuoteTag) {
+      current += char;
+      continue;
+    }
+
+    // Handle Single Quotes ('...')
+    if (char === "'" && !inDoubleQuote) {
+      if (inSingleQuote && nextChar === "'") {
+        current += "''";
+        i++;
+        continue;
+      }
+      inSingleQuote = !inSingleQuote;
+      current += char;
+      continue;
+    }
+
+    // Handle Double Quotes ("...")
+    if (char === '"' && !inSingleQuote) {
+      if (inDoubleQuote && nextChar === '"') {
+        current += '""';
+        i++;
+        continue;
+      }
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+      continue;
+    }
+
+    // Semicolon outside any string / comment / dollar quote
+    if (!inSingleQuote && !inDoubleQuote && !dollarQuoteTag && char === ";") {
+      const trimmed = current.trim();
+      if (trimmed) {
+        statements.push(trimmed);
+      }
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  const finalTrimmed = current.trim();
+  if (finalTrimmed) {
+    statements.push(finalTrimmed);
+  }
+
+  return statements;
+}
+
 export class SqlValidator {
   private static readonly FORBIDDEN_PATTERNS = [
     /\bDROP\s+DATABASE\b/i,
@@ -56,11 +175,8 @@ export class SqlValidator {
       }
     }
 
-    // Statement balance & delimiter check
-    const rawStatements = trimmed
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // Statement balance & delimiter check using robust SQL parser
+    const rawStatements = splitSqlStatements(trimmed);
 
     if (rawStatements.length === 0) {
       errors.push("No executable SQL statements found.");
@@ -100,13 +216,13 @@ export class SqlValidator {
       // Check table bounds if allowedTables specified
       if (allowedTables && allowedTables.length > 0) {
         let referencedTable = "";
-        const alterMatch = stmt.match(/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_"]+)/i);
-        const createIndexMatch = stmt.match(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+([a-zA-Z0-9_"]+)/i);
-        const updateMatch = stmt.match(/UPDATE\s+([a-zA-Z0-9_"]+)/i);
+        const alterMatch = stmt.match(/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:([a-zA-Z0-9_"]+)\.)?([a-zA-Z0-9_"]+)/i);
+        const createIndexMatch = stmt.match(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+(?:([a-zA-Z0-9_"]+)\.)?([a-zA-Z0-9_"]+)/i);
+        const updateMatch = stmt.match(/UPDATE\s+(?:([a-zA-Z0-9_"]+)\.)?([a-zA-Z0-9_"]+)/i);
 
-        if (alterMatch) referencedTable = alterMatch[1].replace(/"/g, "");
-        else if (createIndexMatch) referencedTable = createIndexMatch[1].replace(/"/g, "");
-        else if (updateMatch) referencedTable = updateMatch[1].replace(/"/g, "");
+        if (alterMatch) referencedTable = alterMatch[2].replace(/"/g, "");
+        else if (createIndexMatch) referencedTable = createIndexMatch[2].replace(/"/g, "");
+        else if (updateMatch) referencedTable = updateMatch[2].replace(/"/g, "");
 
         if (referencedTable && !allowedTables.includes(referencedTable)) {
           errors.push(`Statement targets unauthorized or unexpected table '${referencedTable}'. Allowed: [${allowedTables.join(", ")}]`);
@@ -221,84 +337,87 @@ export class SafeMigrationGenerator {
     const proposedStatements: string[] = [];
     const rollbackStatements: string[] = [];
 
-    // Parse input statements
-    const statements = originalSql
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // Parse input statements with PostgreSQL-aware splitter
+    const statements = splitSqlStatements(originalSql);
 
     for (const stmt of statements) {
-      // 1. Pattern: ALTER TABLE <tbl> ADD COLUMN <col> <type> NOT NULL DEFAULT <val>
+      // 1. Pattern: ALTER TABLE [schema.]<tbl> ADD COLUMN [IF NOT EXISTS] <col> <type> NOT NULL DEFAULT <val>
       const addColumnNotnullDefaultMatch = stmt.match(
-        /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+([a-zA-Z0-9_()]+)\s+NOT\s+NULL\s+DEFAULT\s+([^;]+)/i
+        /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:([a-zA-Z0-9_"]+)\.)?([a-zA-Z0-9_"]+)\s+ADD\s+(?:COLUMN\s+)?(IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+([a-zA-Z0-9_()]+)\s+NOT\s+NULL\s+DEFAULT\s+([^;]+)/i
       );
 
-      // 2. Pattern: ALTER TABLE <tbl> ADD COLUMN <col> <type> DEFAULT <val> (nullable default)
+      // 2. Pattern: ALTER TABLE [schema.]<tbl> ADD COLUMN [IF NOT EXISTS] <col> <type> DEFAULT <val> (nullable default)
       const addColumnDefaultMatch = stmt.match(
-        /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+([a-zA-Z0-9_()]+)\s+DEFAULT\s+([^;]+)/i
+        /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:([a-zA-Z0-9_"]+)\.)?([a-zA-Z0-9_"]+)\s+ADD\s+(?:COLUMN\s+)?(IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+([a-zA-Z0-9_()]+)\s+DEFAULT\s+([^;]+)/i
       );
 
-      // 3. Pattern: CREATE INDEX <idx> ON <tbl>(<cols>)
+      // 3. Pattern: CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] <idx> ON [schema.]<tbl>(<cols>)
       const createIndexMatch = stmt.match(
-        /CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+ON\s+([a-zA-Z0-9_"]+)\s*\(([^)]+)\)/i
+        /CREATE\s+(UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_"]+)\s+ON\s+(?:([a-zA-Z0-9_"]+)\.)?([a-zA-Z0-9_"]+)\s*\(([^)]+)\)/i
       );
 
       if (addColumnNotnullDefaultMatch) {
-        const table = addColumnNotnullDefaultMatch[1].replace(/"/g, "");
-        const column = addColumnNotnullDefaultMatch[2].replace(/"/g, "");
-        const colType = addColumnNotnullDefaultMatch[3].trim();
-        const defaultVal = addColumnNotnullDefaultMatch[4].trim();
+        const schema = addColumnNotnullDefaultMatch[1] ? addColumnNotnullDefaultMatch[1].replace(/"/g, "") : "";
+        const table = addColumnNotnullDefaultMatch[2].replace(/"/g, "");
+        const fullTableName = schema ? `${schema}.${table}` : table;
+        const column = addColumnNotnullDefaultMatch[4].replace(/"/g, "");
+        const colType = addColumnNotnullDefaultMatch[5].trim();
+        const defaultVal = addColumnNotnullDefaultMatch[6].trim();
 
         affectedObjectsSet.add(table);
         affectedObjectsSet.add(`${table}.${column}`);
 
         // Safe Multi-Step Staged Remediation:
         // Step 1: Add column without NOT NULL or full-table lock
-        proposedStatements.push(`-- Step 1: Add column nullable without locking table rewrite\nALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${colType};`);
-        remediationSteps.push(`Add column '${column}' to '${table}' as nullable first to prevent AccessExclusiveLock full-table rewrite.`);
+        proposedStatements.push(`-- Step 1: Add column nullable without locking table rewrite\nALTER TABLE ${fullTableName} ADD COLUMN IF NOT EXISTS ${column} ${colType};`);
+        remediationSteps.push(`Add column '${column}' to '${fullTableName}' as nullable first to prevent AccessExclusiveLock full-table rewrite.`);
 
         // Step 2: Backfill default values
-        proposedStatements.push(`-- Step 2: Backfill default values for existing rows\nUPDATE ${table} SET ${column} = ${defaultVal} WHERE ${column} IS NULL;`);
+        proposedStatements.push(`-- Step 2: Backfill default values for existing rows\nUPDATE ${fullTableName} SET ${column} = ${defaultVal} WHERE ${column} IS NULL;`);
         remediationSteps.push(`Backfill existing rows with default value ${defaultVal}.`);
 
         // Step 3: Set column default for future inserts
-        proposedStatements.push(`-- Step 3: Set column default for future write operations\nALTER TABLE ${table} ALTER COLUMN ${column} SET DEFAULT ${defaultVal};`);
+        proposedStatements.push(`-- Step 3: Set column default for future write operations\nALTER TABLE ${fullTableName} ALTER COLUMN ${column} SET DEFAULT ${defaultVal};`);
         remediationSteps.push(`Set default value on column '${column}' for future writes.`);
 
         // Step 4: Apply NOT NULL constraint safely
-        proposedStatements.push(`-- Step 4: Enforce NOT NULL invariant\nALTER TABLE ${table} ALTER COLUMN ${column} SET NOT NULL;`);
+        proposedStatements.push(`-- Step 4: Enforce NOT NULL invariant\nALTER TABLE ${fullTableName} ALTER COLUMN ${column} SET NOT NULL;`);
         remediationSteps.push(`Enforce NOT NULL constraint now that all rows are guaranteed populated.`);
 
-        // Rollback strategy
-        rollbackStatements.unshift(`ALTER TABLE ${table} DROP COLUMN IF EXISTS ${column};`);
+        // Rollback strategy: Drop column cleanly if created by this migration
+        rollbackStatements.unshift(`ALTER TABLE ${fullTableName} DROP COLUMN IF EXISTS ${column};`);
       } else if (addColumnDefaultMatch) {
-        const table = addColumnDefaultMatch[1].replace(/"/g, "");
-        const column = addColumnDefaultMatch[2].replace(/"/g, "");
-        const colType = addColumnDefaultMatch[3].trim();
-        const defaultVal = addColumnDefaultMatch[4].trim();
+        const schema = addColumnDefaultMatch[1] ? addColumnDefaultMatch[1].replace(/"/g, "") : "";
+        const table = addColumnDefaultMatch[2].replace(/"/g, "");
+        const fullTableName = schema ? `${schema}.${table}` : table;
+        const column = addColumnDefaultMatch[4].replace(/"/g, "");
+        const colType = addColumnDefaultMatch[5].trim();
+        const defaultVal = addColumnDefaultMatch[6].trim();
 
         affectedObjectsSet.add(table);
         affectedObjectsSet.add(`${table}.${column}`);
 
-        proposedStatements.push(`-- Step 1: Add nullable column\nALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${colType};`);
-        proposedStatements.push(`-- Step 2: Set default for future inserts\nALTER TABLE ${table} ALTER COLUMN ${column} SET DEFAULT ${defaultVal};`);
+        proposedStatements.push(`-- Step 1: Add nullable column\nALTER TABLE ${fullTableName} ADD COLUMN IF NOT EXISTS ${column} ${colType};`);
+        proposedStatements.push(`-- Step 2: Set default for future inserts\nALTER TABLE ${fullTableName} ALTER COLUMN ${column} SET DEFAULT ${defaultVal};`);
         remediationSteps.push(`Added nullable column '${column}' with staged default to prevent lock escalation.`);
 
-        rollbackStatements.unshift(`ALTER TABLE ${table} DROP COLUMN IF EXISTS ${column};`);
+        rollbackStatements.unshift(`ALTER TABLE ${fullTableName} DROP COLUMN IF EXISTS ${column};`);
       } else if (createIndexMatch) {
         const isUnique = Boolean(createIndexMatch[1]);
         const indexName = createIndexMatch[2].replace(/"/g, "");
-        const table = createIndexMatch[3].replace(/"/g, "");
-        const columns = createIndexMatch[4].trim();
+        const schema = createIndexMatch[3] ? createIndexMatch[3].replace(/"/g, "") : "";
+        const table = createIndexMatch[4].replace(/"/g, "");
+        const fullTableName = schema ? `${schema}.${table}` : table;
+        const columns = createIndexMatch[5].trim();
 
         affectedObjectsSet.add(table);
         affectedObjectsSet.add(indexName);
 
         const uniqueClause = isUnique ? "UNIQUE " : "";
         proposedStatements.push(
-          `-- Step: Build index concurrently to prevent table write blocking\nCREATE ${uniqueClause}INDEX CONCURRENTLY IF NOT EXISTS ${indexName} ON ${table}(${columns});`
+          `-- Step: Build index concurrently to prevent table write blocking\nCREATE ${uniqueClause}INDEX CONCURRENTLY IF NOT EXISTS ${indexName} ON ${fullTableName}(${columns});`
         );
-        remediationSteps.push(`Create index '${indexName}' concurrently on table '${table}' to prevent write locking.`);
+        remediationSteps.push(`Create index '${indexName}' concurrently on table '${fullTableName}' to prevent write locking.`);
 
         rollbackStatements.unshift(`DROP INDEX CONCURRENTLY IF EXISTS ${indexName};`);
       } else {

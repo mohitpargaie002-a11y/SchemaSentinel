@@ -67,6 +67,36 @@ describe("SafeMigrationGenerator Unit Tests", () => {
     expect(proposal.rollbackSql).toContain("ALTER TABLE payments DROP COLUMN IF EXISTS status;");
   });
 
+  it("handles schema-qualified table names like public.orders", () => {
+    const inputSql = `ALTER TABLE public.orders ADD COLUMN priority INT NOT NULL DEFAULT 1;`;
+    const proposal = generator.generateProposal({
+      sessionId: "test-qualified",
+      planId: "plan-qual",
+      targetId: "staging-demo",
+      originalSql: inputSql,
+    });
+
+    expect(proposal.proposedSql).toContain("ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS priority INT;");
+    expect(proposal.proposedSql).toContain("UPDATE public.orders SET priority = 1 WHERE priority IS NULL;");
+    expect(proposal.proposedSql).toContain("ALTER TABLE public.orders ALTER COLUMN priority SET NOT NULL;");
+  });
+
+  it("safely splits SQL without breaking on semicolons inside string literals or dollar-quotes", () => {
+    const inputSql = `
+      UPDATE orders SET notes = 'semicolon; in; string;' WHERE id = 1;
+      ALTER TABLE orders ADD COLUMN flags INT NOT NULL DEFAULT 0;
+    `;
+    const proposal = generator.generateProposal({
+      sessionId: "test-split",
+      planId: "plan-split",
+      targetId: "staging-demo",
+      originalSql: inputSql,
+    });
+
+    expect(proposal.proposedSql).toContain("UPDATE orders SET notes = 'semicolon; in; string;' WHERE id = 1;");
+    expect(proposal.proposedSql).toContain("ALTER TABLE orders ADD COLUMN IF NOT EXISTS flags INT;");
+  });
+
   it("rejects empty SQL with SafeMigrationValidationError", () => {
     expect(() => {
       generator.generateProposal({

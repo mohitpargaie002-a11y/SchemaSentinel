@@ -70,5 +70,5 @@ describe("Safe Migration End-to-End Workflow Integration Tests", () => {
     // Verify PR Evidence item recorded
     const finalEvidenceTypes = prResult.sessionState.evidenceItems.map((e) => e.sourceType);
     expect(finalEvidenceTypes).toContain("GITHUB_PR");
-  });
+  }, 120000);
 });

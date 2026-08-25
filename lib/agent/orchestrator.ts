@@ -27,6 +27,7 @@ import {
   defaultSafeMigrationGenerator,
 } from "./safe-migration-generator.js";
 import {
+  ActivityEventStatus,
   AgentActivityEvent,
   AgentContext,
   AgentRole,
@@ -744,7 +745,7 @@ export class TrueForgeOrchestrator {
 
     const emitActivity = (
       actor: AgentRole,
-      status: any,
+      status: ActivityEventStatus,
       phase: string,
       message: string,
       durationMs?: number,
@@ -936,6 +937,7 @@ export class TrueForgeOrchestrator {
       `Safe migration validated. Awaiting operator approval to create GitHub PR.`
     );
 
+    session.approvalCheckpoint = checkpoint;
     session.safeMigrationProposal = proposal;
     await this.sessionStore.saveSession(session);
 
@@ -974,6 +976,10 @@ export class TrueForgeOrchestrator {
       throw new Error("Missing approval token for safe migration PR creation.");
     }
 
+    if (session.approvalCheckpoint) {
+      this.approvalGate.restoreCheckpoint(session.approvalCheckpoint);
+    }
+
     // Cryptographic validation of approval token against exact proposed SQL and session metadata
     this.approvalGate.verifyApproval(
       token,
@@ -983,12 +989,9 @@ export class TrueForgeOrchestrator {
       proposal.proposedSql
     );
 
-    // Consume single-use token
-    this.approvalGate.revokeToken(token);
-
     const emitActivity = (
       actor: AgentRole,
-      status: any,
+      status: ActivityEventStatus,
       phase: string,
       message: string,
       durationMs?: number,
@@ -1159,6 +1162,9 @@ ${proposal.proposedSql}
         undefined,
         prEvidence.evidenceId
       );
+
+      // Durable single-use token consumption upon successful PR creation
+      this.approvalGate.revokeToken(token);
 
       session.githubPr = prMeta;
       session.status = transitionSessionState(session.status, "PR_CREATED");

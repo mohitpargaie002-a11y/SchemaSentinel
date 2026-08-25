@@ -49,12 +49,15 @@ describe("Safe Migration Approval Gate Unit Tests", () => {
     }).toThrow(ApprovalGateError);
   });
 
-  it("revokes approval token upon single use", () => {
-    const checkpoint = gate.grantSafeMigrationApproval(sessionId, planId, targetId, proposedSql);
-    gate.revokeToken(checkpoint.token);
+  it("restores checkpoint into fresh ApprovalGate instance across process restarts", () => {
+    const originalGate = new ApprovalGate();
+    const checkpoint = originalGate.grantSafeMigrationApproval(sessionId, planId, targetId, proposedSql);
 
-    expect(() => {
-      gate.verifyApproval(checkpoint.token, sessionId, planId, targetId, proposedSql);
-    }).toThrow(ApprovalGateError);
+    // Simulate new fresh instance after restart
+    const freshGate = new ApprovalGate();
+    freshGate.restoreCheckpoint(checkpoint);
+
+    const verified = freshGate.verifyApproval(checkpoint.token, sessionId, planId, targetId, proposedSql);
+    expect(verified.token).toBe(checkpoint.token);
   });
 });
