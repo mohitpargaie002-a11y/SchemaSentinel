@@ -119,9 +119,9 @@ npm run demo:reset
 ---
 
 ## 📚 Repository Map & Documentation
-- [AGENTS.md](file:///e:/F/Codex/Hackathon2/AGENTS.md) — Agent governance and safety rules
-- [ARCHITECTURE.md](file:///e:/F/Codex/Hackathon2/ARCHITECTURE.md) — Multi-agent system topology & state machine
-- [DESIGN.md](file:///e:/F/Codex/Hackathon2/DESIGN.md) — Ink & Paper UI system specification
-- [SECURITY.md](file:///e:/F/Codex/Hackathon2/SECURITY.md) — Threat model, security controls, & target allowlisting
-- [DEMO.md](file:///e:/F/Codex/Hackathon2/DEMO.md) — 2-minute golden demo guide
-- [HANDOFF.md](file:///e:/F/Codex/Hackathon2/HANDOFF.md) — Final Phase 7 handoff & production readiness notes
+- [AGENTS.md](./AGENTS.md) — Agent governance and safety rules
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — Multi-agent system topology & state machine
+- [DESIGN.md](./DESIGN.md) — Ink & Paper UI system specification
+- [SECURITY.md](./SECURITY.md) — Threat model, security controls, & target allowlisting
+- [DEMO.md](./DEMO.md) — 2-minute golden demo guide
+- [HANDOFF.md](./HANDOFF.md) — Final Phase 7 handoff & production readiness notes
