@@ -20,12 +20,14 @@ async function runFinalProof() {
   const sessionId = `sess_final_proof_${Date.now()}`;
   const targetId = "staging-demo";
   const migrationFilePath = "migrations/0038_add_order_status.sql";
-  const repo = "mohitpargaie002-a11y/SchemaSentinel";
+  const repo = process.env.GITHUB_REPO || "mohitpargaie002-a11y/SchemaSentinel";
+  const baseBranch = process.env.GITHUB_BASE_BRANCH || "master";
   const userPrompt = "Review risky migration 0038_add_order_status.sql, validate in sandbox, generate zero-lock safe staged remediation, and open a GitHub PR for Qodo review.";
 
   console.log(`[USER REQUEST]     : "${userPrompt}"`);
   console.log(`[SESSION ID]       : ${sessionId}`);
   console.log(`[TARGET DATABASE]  : ${targetId} (Allowlisted Staging Profile)`);
+  console.log(`[TARGET REPO]      : ${repo} (Base: ${baseBranch})`);
   console.log(`[MIGRATION FILE]   : ${migrationFilePath}\n`);
 
   const sessionStore = new FileSessionStore();
@@ -106,7 +108,7 @@ async function runFinalProof() {
     sessionId,
     approvedBy: "lead-dba@schemasentinel.dev",
     approvalToken: proposal.approvalToken,
-    baseBranch: "master",
+    baseBranch,
   });
 
   const pr = prResult.githubPr;

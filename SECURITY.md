@@ -37,3 +37,14 @@
   - Does **not** measure replication lag.
 - **Operational Standard**:
   - All high-risk operations rely on **Sandbox Validation + Static Risk Analysis + Staged Zero-Downtime Restructuring + Human Operator Signoff**.
+
+---
+
+## 4. Operational Risk & Limitation Scope
+
+- **Implementation Defects**: No unresolved security vulnerabilities or correctness defects identified in the SchemaSentinel codebase.
+- **Operational Boundaries**:
+  - Unbatched backfills on high-volume tables (>100k rows) must be partitioned in background worker loops to reduce replication lag.
+  - PGlite WASM simulation validates DDL outcome, invariants, and rollback, but cannot replace static risk analysis or staging target verification for lock contention.
+  - External GitHub MCP operations depend on valid network credentials and repository write permissions.
+

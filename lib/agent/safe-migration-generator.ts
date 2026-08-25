@@ -286,7 +286,7 @@ export class DiffGenerator {
       chunks.push({
         type: "added",
         lines: addedLines,
-        explanation: "Introduced staged zero-downtime remediation: nullable column add, batch default backfill, future default constraint, and concurrent index creation.",
+        explanation: "Introduced reduced-lock staged remediation: nullable column add, staged default backfill, future default constraint, and concurrent index creation.",
       });
     }
 
