@@ -18,6 +18,7 @@ export interface IPostgresMcpService {
     plan?: MigrationPlan,
     onBeforeVerification?: () => void | Promise<void>
   ): Promise<ApplyResult>;
+  getApprovalGate?(): IApprovalGate;
 }
 
 export class PostgresMcpService implements IPostgresMcpService {
@@ -34,6 +35,10 @@ export class PostgresMcpService implements IPostgresMcpService {
     this.targetRegistry = targetRegistry;
     this.approvalGate = approvalGate;
     this.verifier = verifier || new PostApplyVerifier(this);
+  }
+
+  public getApprovalGate(): IApprovalGate {
+    return this.approvalGate;
   }
 
   /**
