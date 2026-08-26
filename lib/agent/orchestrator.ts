@@ -636,6 +636,13 @@ export class TrueForgeOrchestrator {
       throw new Error("[Approval Error]: Missing required approval token for approved migration.");
     }
 
+    if (session.approvalCheckpoint) {
+      this.approvalGate.restoreCheckpoint(session.approvalCheckpoint);
+      if (typeof this.postgresMcp.getApprovalGate === "function") {
+        this.postgresMcp.getApprovalGate().restoreCheckpoint(session.approvalCheckpoint);
+      }
+    }
+
     session.status = transitionSessionState(session.status, "APPROVED");
     this.broadcaster.emitStateChange(params.sessionId, session.status);
 
