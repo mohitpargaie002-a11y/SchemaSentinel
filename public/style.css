@@ -311,6 +311,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .readonly-text {
@@ -1053,7 +1054,6 @@ body {
   border-radius: var(--radius-sm);
   flex: 1;
   min-height: 300px;
-  max-height: 600px;
   overflow-y: auto;
   padding: 12px;
   display: flex;
@@ -1061,6 +1061,7 @@ body {
   gap: 8px;
   min-width: 0;
 }
+
 
 .timeline-empty {
   color: var(--text-muted);
@@ -1510,9 +1511,6 @@ body {
   .timeline-panel {
     min-height: 360px;
   }
-  .timeline-stream {
-    max-height: 420px;
-  }
 }
 
 @media (max-width: 768px) {
@@ -1529,11 +1527,10 @@ body {
   .form-action {
     grid-column: span 1;
   }
-  .btn {
+  .form-action .btn,
+  .approval-btn-group .btn,
+  .pr-btn-group .btn {
     width: 100%;
-  }
-  .header-actions .btn {
-    width: auto;
   }
   .metrics-table-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
