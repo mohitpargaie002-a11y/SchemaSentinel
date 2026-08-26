@@ -133,4 +133,55 @@ describe("UI Data Binding & Visual Contract Tests", () => {
     expect(cssContent).toContain("--font-mono");
     expect(cssContent).toContain(":focus-visible");
   });
+
+  it("verifies grid alignment, subagent card stretch, and trace height structure in scoped public/style.css rules", async () => {
+    const cssPath = path.resolve(process.cwd(), "public/style.css");
+    const cssContent = await fs.readFile(cssPath, "utf-8");
+
+    function extractRuleBlock(css: string, selector: string): string {
+      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`, "m");
+      const match = css.match(regex);
+      return match ? match[1] : "";
+    }
+
+    // Main 2-column grid structure scoped to .workflow-grid
+    const workflowGridBlock = extractRuleBlock(cssContent, ".workflow-grid");
+    expect(workflowGridBlock).toContain("grid-template-columns: minmax(0, 1.35fr) minmax(360px, 1fr);");
+    expect(workflowGridBlock).toContain("align-items: stretch;");
+
+    // Subagent cards equal stretching scoped to .subagents-grid and .subagent-metrics
+    const subagentsGridBlock = extractRuleBlock(cssContent, ".subagents-grid");
+    expect(subagentsGridBlock).toContain("grid-template-columns: repeat(4, minmax(0, 1fr));");
+    expect(subagentsGridBlock).toContain("align-items: stretch;");
+
+    const subagentMetricsBlock = extractRuleBlock(cssContent, ".subagent-metrics");
+    expect(subagentMetricsBlock).toContain("margin-top: auto;");
+
+    // Quantitative metrics grid scoped to .metrics-table-grid
+    const metricsTableGridBlock = extractRuleBlock(cssContent, ".metrics-table-grid");
+    expect(metricsTableGridBlock).toContain("grid-template-columns: repeat(3, minmax(0, 1fr));");
+
+    // Execution trace filling vertical space scoped to .timeline-panel and .timeline-stream
+    const timelinePanelBlock = extractRuleBlock(cssContent, ".timeline-panel");
+    expect(timelinePanelBlock).toContain("display: flex;");
+    expect(timelinePanelBlock).toContain("flex-direction: column;");
+    expect(timelinePanelBlock).toContain("flex: 1;");
+
+    const timelineStreamBlock = extractRuleBlock(cssContent, ".timeline-stream");
+    expect(timelineStreamBlock).toContain("flex: 1;");
+    expect(timelineStreamBlock).toContain("overflow-y: auto;");
+    expect(timelineStreamBlock).toContain("min-height: 300px;");
+
+    // Scoped mobile action buttons
+    expect(cssContent).toContain(".form-action .btn");
+    expect(cssContent).toContain(".approval-btn-group .btn");
+    expect(cssContent).toContain(".pr-btn-group .btn");
+
+    // Responsive breakpoints
+    expect(cssContent).toContain("@media (max-width: 1180px)");
+    expect(cssContent).toContain("@media (max-width: 768px)");
+    expect(cssContent).toContain("@media (max-width: 480px)");
+  });
 });
+
