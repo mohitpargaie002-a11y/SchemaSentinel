@@ -133,4 +133,30 @@ describe("UI Data Binding & Visual Contract Tests", () => {
     expect(cssContent).toContain("--font-mono");
     expect(cssContent).toContain(":focus-visible");
   });
+
+  it("verifies grid alignment, subagent card stretch, and trace height structure in public/style.css", async () => {
+    const cssPath = path.resolve(process.cwd(), "public/style.css");
+    const cssContent = await fs.readFile(cssPath, "utf-8");
+
+    // Main 2-column grid structure
+    expect(cssContent).toContain("grid-template-columns: minmax(0, 1.35fr) minmax(360px, 1fr);");
+    expect(cssContent).toContain("align-items: stretch;");
+
+    // Subagent cards equal stretching & bottom-anchored metrics
+    expect(cssContent).toContain("grid-template-columns: repeat(4, minmax(0, 1fr));");
+    expect(cssContent).toContain("margin-top: auto;");
+
+    // Quantitative metrics grid
+    expect(cssContent).toContain("grid-template-columns: repeat(3, minmax(0, 1fr));");
+
+    // Execution trace filling vertical space
+    expect(cssContent).toContain(".timeline-panel {");
+    expect(cssContent).toContain("flex: 1;");
+
+    // Responsive breakpoints
+    expect(cssContent).toContain("@media (max-width: 1180px)");
+    expect(cssContent).toContain("@media (max-width: 768px)");
+    expect(cssContent).toContain("@media (max-width: 480px)");
+  });
 });
+
